@@ -6,3 +6,5 @@ dist
 .env.*
 !.env.example
 
+
+apps/macos/dist-electron
