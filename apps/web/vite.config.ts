@@ -13,8 +13,8 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/v1": {
-        // `wrangler dev` default port in this repo is 8788
-        target: "http://localhost:8788",
+        // `wrangler dev` defaults to 8787; override if you run it elsewhere.
+        target: process.env.PASTE_API_PROXY_TARGET || "http://localhost:8787",
         changeOrigin: true,
       },
     },
