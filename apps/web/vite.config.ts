@@ -13,7 +13,8 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/v1": {
-        target: "http://localhost:8787",
+        // `wrangler dev` default port in this repo is 8788
+        target: "http://localhost:8788",
         changeOrigin: true,
       },
     },

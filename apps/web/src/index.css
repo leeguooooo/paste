@@ -2,9 +2,12 @@
   --card-width: 280px;
   --card-height: 200px;
   --gap: 24px;
-  --primary: #007aff;
+  --primary: #0a84ff;
   --text: #ffffff;
   --shelf-bg: rgba(20, 20, 20, 0.85);
+  --card-bg: #ffffff;
+  --card-fg: #0f172a;
+  --card-muted: rgba(15, 23, 42, 0.55);
 }
 
 * { box-sizing: border-box; }
@@ -94,35 +97,101 @@ body {
 .clip-card {
   flex: 0 0 var(--card-width);
   height: var(--card-height);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
+  background: var(--card-bg);
+  color: var(--card-fg);
+  border: 1px solid rgba(2, 6, 23, 0.08);
+  border-radius: 18px;
   scroll-snap-align: center;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   cursor: pointer;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.22),
+    0 2px 0 rgba(255, 255, 255, 0.25) inset;
 }
 
 .clip-card.selected, .clip-card:hover {
-  transform: scale(1.05) translateY(-5px);
-  background: rgba(255, 255, 255, 0.12);
-  border: 2px solid var(--primary);
-  box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+  transform: scale(1.045) translateY(-6px);
+  border-color: color-mix(in srgb, var(--accent, var(--primary)) 60%, rgba(2, 6, 23, 0.08));
+  box-shadow:
+    0 26px 70px rgba(0, 0, 0, 0.38),
+    0 0 0 2px color-mix(in srgb, var(--accent, var(--primary)) 45%, transparent);
 }
+
+.clip-head {
+  height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent, var(--primary)) 78%, white),
+      color-mix(in srgb, var(--accent, var(--primary)) 55%, white)
+    );
+  border-bottom: 1px solid rgba(2, 6, 23, 0.06);
+}
+
+.clip-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.clip-type {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+  color: rgba(2, 6, 23, 0.75);
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(2, 6, 23, 0.08);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+}
+
+.clip-age {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(2, 6, 23, 0.55);
+}
+
+.clip-fav {
+  appearance: none;
+  border: 0;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(2, 6, 23, 0.08);
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(2, 6, 23, 0.55);
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s, color 0.15s;
+}
+
+.clip-fav:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.75); color: rgba(2, 6, 23, 0.75); }
+.clip-fav.on { color: rgba(2, 6, 23, 0.9); }
 
 .clip-preview {
   flex: 1;
-  padding: 16px;
+  padding: 14px 16px;
   font-size: 13px;
   line-height: 1.5;
-  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
   overflow: hidden;
+  background:
+    radial-gradient(60px 60px at 20% 20%, rgba(0, 0, 0, 0.04), transparent 60%),
+    radial-gradient(80px 80px at 80% 30%, rgba(0, 0, 0, 0.03), transparent 55%);
 }
 
 .preview-text {
@@ -138,46 +207,42 @@ body {
   width: 100%;
   height: 100%;
   display: block;
-  border-radius: 12px;
-  object-fit: contain;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  object-fit: cover;
+  background: rgba(2, 6, 23, 0.04);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
 }
 
 .clip-footer {
-  height: 32px;
+  height: 36px;
   padding: 0 12px;
-  background: rgba(0,0,0,0.3);
+  background: rgba(2, 6, 23, 0.03);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 10px;
-  color: rgba(255,255,255,0.5);
-  text-transform: uppercase;
-  font-weight: 600;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--card-muted);
+  font-weight: 700;
 }
 
-.clip-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.clip-meta-item {
+.clip-device {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  color: rgba(2, 6, 23, 0.55);
 }
 
-.clip-meta-item span {
+.clip-device span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.clip-meta-sep {
-  opacity: 0.6;
+.clip-hint {
+  color: rgba(2, 6, 23, 0.42);
+  font-weight: 700;
 }
 
 .icon-btn {

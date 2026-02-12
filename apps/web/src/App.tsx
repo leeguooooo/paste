@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { ClipItem, ApiResponse, ClipListResponse } from "@paste/shared";
+import type { ClipItem, ClipType, ApiResponse, ClipListResponse } from "@paste/shared";
 import { 
   Search, 
   Settings, 
@@ -34,6 +34,26 @@ const getImageSrc = (clip: ClipItem): string | null => {
   if (isValidImageDataUrl(clip.imageDataUrl)) return clip.imageDataUrl;
   if (typeof clip.imageUrl === "string" && clip.imageUrl.trim()) return clip.imageUrl;
   return null;
+};
+
+const getTypeAccent = (type: ClipType): string => {
+  switch (type) {
+    case "link": return "#3B82F6";
+    case "text": return "#F59E0B";
+    case "code": return "#A855F7";
+    case "html": return "#22C55E";
+    case "image": return "#FB7185";
+    default: return "#64748B";
+  }
+};
+
+const formatAgeShort = (createdAtMs: number): string => {
+  const now = Date.now();
+  const delta = Math.max(0, now - createdAtMs);
+  if (delta < 60_000) return `${Math.max(1, Math.floor(delta / 1000))}s`;
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
+  return `${Math.floor(delta / 86_400_000)}d`;
 };
 
 export default function App() {
@@ -281,39 +301,45 @@ export default function App() {
             const isSelected = index === selectedIndex;
             const isCopied = copiedId === clip.id;
             const device = getDeviceMeta(clip.deviceId);
+            const accent = getTypeAccent(clip.type);
+            const age = formatAgeShort(clip.createdAt);
+            const cardStyle = { ["--accent" as any]: accent } as React.CSSProperties;
             return (
               <div 
                 key={clip.id} 
                 className={`clip-card ${isSelected ? 'selected' : ''}`}
+                style={cardStyle}
                 onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
               >
+                <div className="clip-head">
+                  <div className="clip-head-left">
+                    <span className="clip-type">{clip.type.toUpperCase()}</span>
+                    <span className="clip-age">{age}</span>
+                  </div>
+                  <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
+                      aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
+                      onClick={(e) => void handleToggleFavorite(e, clip)}
+                      type="button"
+                    >
+                      <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
+                    </button>
+                  </div>
+                </div>
                 <div className="clip-preview">
                   {clip.type === "image" && getImageSrc(clip) ? (
                     <img src={getImageSrc(clip) as string} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />
                   ) : (
-                    <div className="preview-text">{isCopied ? "✓ Copied!" : clip.content}</div>
+                    <div className="preview-text">{isCopied ? "Copied" : (clip.summary || clip.content)}</div>
                   )}
                 </div>
                 <div className="clip-footer">
-                  <div className="clip-meta">
-                    <div className="clip-meta-item">
-                      {getIcon(clip.type)}
-                      <span>{clip.type}</span>
-                    </div>
-                    <span className="clip-meta-sep" aria-hidden="true">•</span>
-                    <div className="clip-meta-item" title={clip.deviceId}>
-                      {device.icon}
-                      <span>{device.label}</span>
-                    </div>
+                  <div className="clip-device" title={clip.deviceId}>
+                    {device.icon}
+                    <span>{device.label}</span>
                   </div>
-                  <div className="clip-actions" onClick={e => e.stopPropagation()}>
-                    <Star 
-                      size={14} 
-                      fill={clip.isFavorite ? "#ffcc00" : "transparent"} 
-                      style={{color: clip.isFavorite ? "#ffcc00" : "inherit", cursor: 'pointer'}}
-                      onClick={(e) => void handleToggleFavorite(e, clip)}
-                    />
-                  </div>
+                  <div className="clip-hint">{isCopied ? "Copied to clipboard" : "Click to copy"}</div>
                 </div>
               </div>
             );
