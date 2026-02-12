@@ -14,6 +14,7 @@ const {
 } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFile, execFileSync } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
 
 const isDev = !app.isPackaged;
@@ -34,8 +35,72 @@ let lastClipboardFailure = { fingerprint: "", at: 0 };
 let captureClipboardInFlight = null;
 let captureClipboardInFlightProbe = "";
 let registeredHotkey = null;
+let lastTargetApp = { name: "", bundleId: "", at: 0 };
 
 const RELEASES_LATEST_URL = "https://github.com/leeguooooo/paste/releases/latest";
+
+const runAppleScriptSync = (lines) => {
+  const scriptArgs = [];
+  for (const line of Array.isArray(lines) ? lines : [lines]) {
+    scriptArgs.push("-e", String(line));
+  }
+  return execFileSync("osascript", scriptArgs, { encoding: "utf8" }).trim();
+};
+
+const runAppleScript = (lines) => {
+  const scriptArgs = [];
+  for (const line of Array.isArray(lines) ? lines : [lines]) {
+    scriptArgs.push("-e", String(line));
+  }
+  return new Promise((resolve, reject) => {
+    execFile("osascript", scriptArgs, { encoding: "utf8" }, (err, stdout, stderr) => {
+      if (err) {
+        const msg = String(stderr || err.message || "osascript failed").trim();
+        reject(new Error(msg));
+        return;
+      }
+      resolve(String(stdout || "").trim());
+    });
+  });
+};
+
+const getFrontmostApp = () => {
+  try {
+    const out = runAppleScriptSync([
+      'tell application "System Events" to set frontAppName to name of first application process whose frontmost is true',
+      'return frontAppName & "\t" & (id of application frontAppName)'
+    ]);
+    const [name = "", bundleId = ""] = String(out).split("\t");
+    return { name, bundleId };
+  } catch {
+    return { name: "", bundleId: "" };
+  }
+};
+
+const waitForFrontmostApp = async ({ name, bundleId, timeoutMs = 1500 }) => {
+  const start = Date.now();
+  for (;;) {
+    const cur = getFrontmostApp();
+    if ((bundleId && cur.bundleId === bundleId) || (name && cur.name === name)) {
+      return true;
+    }
+    if (Date.now() - start >= timeoutMs) return false;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+};
+
+const tryCaptureFrontmostAppTarget = () => {
+  // Capture the app that was frontmost before showing our overlay. We use this later to
+  // reactivate it so Cmd+V goes back to the original input field.
+  try {
+    const { name, bundleId } = getFrontmostApp();
+    if (!name || !bundleId) return;
+    if (String(name).toLowerCase() === String(app.getName() || "").toLowerCase()) return;
+    lastTargetApp = { name, bundleId, at: Date.now() };
+  } catch {
+    // ignore
+  }
+};
 
 const updateState = {
   checking: false,
@@ -598,6 +663,8 @@ const toggleMainWindow = () => {
     return { visible: false };
   }
 
+  // Record the app currently receiving input before we take focus.
+  tryCaptureFrontmostAppTarget();
   mainWindow.show();
   mainWindow.focus();
   return { visible: true };
@@ -1122,12 +1189,40 @@ const setupIpc = () => {
         mainWindow.hide();
       }
 
-      // 3. 模拟 Cmd+V
+      // 3. 切回原来前台应用，再模拟 Cmd+V
       if (process.platform === "darwin") {
-        setTimeout(() => {
-          const { exec } = require("child_process");
-          exec(`osascript -e 'tell application "System Events" to keystroke "v" using {command down}'`);
-        }, 150); // 稍微增加延迟确保焦点切换成功
+        const targetBundleId = lastTargetApp?.bundleId || "";
+        const targetName = lastTargetApp?.name || "";
+        if (targetBundleId) {
+          try {
+            await runAppleScript([`tell application id "${targetBundleId}" to activate`]);
+          } catch {
+            // ignore (still attempt paste)
+          }
+        }
+
+        // Wait until the original app is truly frontmost; fixed sleeps are flaky.
+        await waitForFrontmostApp({ name: targetName, bundleId: targetBundleId, timeoutMs: 1500 });
+        try {
+          if (targetName) {
+            const safeName = String(targetName).replace(/\"/g, "\\\"");
+            await runAppleScript([
+              'tell application "System Events"',
+              `tell process "${safeName}" to keystroke "v" using {command down}`,
+              "end tell"
+            ]);
+          } else {
+            await runAppleScript(['tell application "System Events" to keystroke "v" using {command down}']);
+          }
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "paste failed";
+          return {
+            ok: false,
+            message:
+              `paste failed: ${msg}\n\n` +
+              `If this keeps happening, enable Accessibility for "${app.getName()}" in System Settings -> Privacy & Security -> Accessibility.`
+          };
+        }
       }
 
       return { ok: true };

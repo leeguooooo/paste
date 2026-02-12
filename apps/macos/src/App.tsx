@@ -228,11 +228,15 @@ export default function App() {
     }
 
     const text = effective.content || effective.sourceUrl || "";
-    await window.macos.pasteAndHide({
+    const res = await window.macos.pasteAndHide({
       text,
       html: effective.contentHtml ?? null,
       imageDataUrl: effective.imageDataUrl ?? null
     });
+    if (!res?.ok) {
+      // Surface the root error (most commonly missing Accessibility permission).
+      alert(res?.message || "Paste failed");
+    }
   };
 
   const handleDelete = async (id: string) => {

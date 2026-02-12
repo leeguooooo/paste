@@ -43,7 +43,6 @@ export default function App() {
       const params = new URLSearchParams();
       if (query) params.append("q", query);
       params.append("limit", "50");
-      params.append("lite", "1");
 
       const res = await fetch(`${API_BASE}/clips?${params.toString()}`, {
         headers: fetchHeaders
