@@ -55,6 +55,8 @@ export default function App() {
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const windowVisibleRef = useRef(false);
+  const refreshTimerRef = useRef<number | null>(null);
 
   const loadConfig = async () => {
     try {
@@ -81,37 +83,49 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Keep the UI in sync with background captures (the main process updates the DB,
-    // but the renderer needs to refresh its list).
-    const offChanged = window.macos.onClipsChanged?.(() => {
-      void loadClips();
-      if (!query && !showSettings) {
-        setSelectedIndex(0);
+    const scheduleRefresh = () => {
+      if (!windowVisibleRef.current) {
+        return;
       }
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+      }
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null;
+        void loadClips();
+      }, 120);
+    };
+
+    // Main process captures clipboard even when the window is hidden. Avoid hitting
+    // IPC/network while hidden; refresh when shown (or while visible).
+    const offChanged = window.macos.onClipsChanged?.(() => {
+      scheduleRefresh();
     });
 
     const offShown = window.macos.onWindowShown?.(() => {
-      void loadClips();
+      windowVisibleRef.current = true;
+      scheduleRefresh();
       if (!query && !showSettings) {
         setSelectedIndex(0);
       }
     });
 
-    const onFocus = () => void loadClips();
-    window.addEventListener("focus", onFocus);
+    const offHidden = window.macos.onWindowHidden?.(() => {
+      windowVisibleRef.current = false;
+    });
 
-    const onVisibility = () => {
-      if (!document.hidden) {
-        void loadClips();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
+    const onFocus = () => scheduleRefresh();
+    window.addEventListener("focus", onFocus);
 
     return () => {
       try { offChanged?.(); } catch {}
       try { offShown?.(); } catch {}
+      try { offHidden?.(); } catch {}
       window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
     };
   }, [loadClips, query, showSettings]);
 

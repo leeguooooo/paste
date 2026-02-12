@@ -41,6 +41,7 @@ declare global {
       toggleWindow: () => Promise<{ visible: boolean }>;
       onClipsChanged: (cb: (payload: { source?: string; at?: number } | undefined) => void) => () => void;
       onWindowShown: (cb: (payload: { at?: number } | undefined) => void) => () => void;
+      onWindowHidden: (cb: (payload: { at?: number } | undefined) => void) => () => void;
     };
   }
 }

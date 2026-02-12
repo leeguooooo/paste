@@ -25,5 +25,11 @@ contextBridge.exposeInMainWorld("macos", {
     const listener = (_evt, payload) => cb(payload);
     ipcRenderer.on("window:shown", listener);
     return () => ipcRenderer.removeListener("window:shown", listener);
+  },
+
+  onWindowHidden: (cb) => {
+    const listener = (_evt, payload) => cb(payload);
+    ipcRenderer.on("window:hidden", listener);
+    return () => ipcRenderer.removeListener("window:hidden", listener);
   }
 });
