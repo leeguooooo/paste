@@ -11,7 +11,10 @@ import {
   FileText,
   Code,
   ArrowRight,
-  Check
+  Check,
+  Globe,
+  Cpu,
+  Monitor
 } from "lucide-react";
 
 type AppConfig = {
@@ -21,6 +24,7 @@ type AppConfig = {
   autoCapture: boolean;
   launchAtLogin: boolean;
   retention: "30d" | "180d" | "365d" | "forever";
+  hotkey: string;
 };
 
 const emptyConfig: AppConfig = {
@@ -29,7 +33,8 @@ const emptyConfig: AppConfig = {
   deviceId: "macos_desktop",
   autoCapture: true,
   launchAtLogin: false,
-  retention: "180d"
+  retention: "180d",
+  hotkey: "CommandOrControl+Shift+V"
 };
 
 const htmlToText = (html?: string | null): string =>
@@ -45,13 +50,11 @@ export default function App() {
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0); // For keyboard nav
+  const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // --- Core Data Loading ---
 
   const loadConfig = async () => {
     try {
@@ -63,54 +66,38 @@ export default function App() {
   const loadClips = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
-      // If query is empty, maybe we show favorites or just recent? 
-      // For now, consistent with Paste, we show all recent.
       const res = await window.macos.listClips({ q: query || undefined });
       if (res?.ok) {
         setClips(res.data.items ?? []);
-        // Reset selection on search change, but keep it if just refreshing
         if (isInitial) setSelectedIndex(0);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [query]);
 
-  // Initial Load
   useEffect(() => {
     void loadConfig();
     void loadClips(true);
   }, []);
 
-  // Debounced Search
   useEffect(() => {
     const timer = setTimeout(() => void loadClips(), 150);
     return () => clearTimeout(timer);
   }, [query, loadClips]);
 
-  // Ensure selection is valid
   useEffect(() => {
     if (clips.length > 0 && selectedIndex >= clips.length) {
       setSelectedIndex(clips.length - 1);
     }
   }, [clips.length, selectedIndex]);
 
-  // --- Scroll Synchronization ---
   useEffect(() => {
     if (!scrollContainerRef.current || clips.length === 0) return;
-    
     const container = scrollContainerRef.current;
-    const cardWidth = 260 + 24; // Width + Gap
-    // Center the selected item
+    const cardWidth = 280 + 24; 
     const targetScroll = (selectedIndex * cardWidth); 
-    
-    container.scrollTo({
-      left: targetScroll,
-      behavior: "smooth"
-    });
+    container.scrollTo({ left: targetScroll, behavior: "smooth" });
   }, [selectedIndex, clips]);
-
-
-  // --- Actions ---
 
   const handleCopy = async (clip: ClipItem) => {
     const text = clip.content || clip.sourceUrl || "";
@@ -119,7 +106,6 @@ export default function App() {
       html: clip.contentHtml ?? null,
       imageDataUrl: clip.imageDataUrl ?? null
     });
-    // Hide window after copy
     await window.macos.toggleWindow();
   };
 
@@ -140,12 +126,9 @@ export default function App() {
     }
   };
 
-  // --- Keyboard Navigation ---
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (showSettings) return; // Let settings handle its own input
-
+      if (showSettings) return;
       switch (e.key) {
         case "ArrowRight":
           e.preventDefault();
@@ -182,7 +165,6 @@ export default function App() {
             setShowSettings(true);
           }
           break;
-        // Search auto-focus: if typing normally and not a nav key, focus input
         default:
           if (
             e.key.length === 1 && 
@@ -196,13 +178,9 @@ export default function App() {
           break;
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [clips, selectedIndex, showSettings, query]);
-
-
-  // --- Render Helpers ---
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -218,16 +196,6 @@ export default function App() {
     if (dataUrl) {
       return <img src={dataUrl} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />;
     }
-
-    if (clip.type === "image") {
-      return (
-        <div className="clip-image-missing">
-          <ImageIcon size={28} />
-          <div style={{ fontSize: 12 }}>Image (no preview)</div>
-        </div>
-      );
-    }
-
     const text = clip.contentHtml ? htmlToText(clip.contentHtml) : clip.content;
     return <div className="preview-text">{(text || "").slice(0, 300)}</div>;
   };
@@ -251,26 +219,24 @@ export default function App() {
     >
       <div className="history-shelf" onClick={e => e.stopPropagation()}>
         <div className="toolbar">
-          <button
-            className="settings-button"
-            onClick={() => setShowSettings(true)}
-            title="Preferences (Cmd+,)"
-          >
-            <Settings size={18} />
-          </button>
-          <div style={{ position: 'relative' }}>
-            <Search 
-              size={18} 
-              style={{ position: 'absolute', left: 14, top: 12, color: 'rgba(255,255,255,0.4)' }} 
-            />
-            <input
-              ref={searchInputRef}
-              className="search-input"
-              placeholder="Type to search..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
-            />
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ position: 'relative' }}>
+              <Search 
+                size={18} 
+                style={{ position: 'absolute', left: 14, top: 12, color: 'rgba(255,255,255,0.4)' }} 
+              />
+              <input
+                ref={searchInputRef}
+                className="search-input"
+                placeholder="Type to search..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
+              />
+            </div>
+            <button className="icon-btn" onClick={() => setShowSettings(true)}>
+              <Settings size={22} />
+            </button>
           </div>
         </div>
 
@@ -284,7 +250,7 @@ export default function App() {
                 data-type={clip.type}
                 onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
               >
-                <div className={"clip-preview" + (clip.type === "image" ? " is-image" : "")}>
+                <div className="clip-preview">
                   {renderPreview(clip)}
                 </div>
                 
@@ -300,135 +266,79 @@ export default function App() {
           })}
         </div>
       </div>
-        
-        {/* Empty State spacer or message */}
-        {clips.length === 0 && !loading && (
-          <div style={{ 
-            width: '100%', 
-            textAlign: 'center', 
-            color: '#888', 
-            fontSize: 14,
-            paddingTop: 80 
-          }}>
-            No items found. Copy something or type to search.
-          </div>
-        )}
 
-      {/* Settings Modal */}
       {showSettings && (
         <div className="settings-overlay" onClick={() => setShowSettings(false)}>
           <div className="settings-panel" onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ margin: 0, fontSize: 18 }}>Preferences</h2>
-              <button onClick={() => setShowSettings(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                <X size={20} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <h2 style={{ margin: 0 }}>Preferences</h2>
+              <button className="icon-btn" onClick={() => setShowSettings(false)}>
+                <X size={24} />
               </button>
             </div>
             
-            <div style={{ display: 'grid', gap: 16 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
-                  Sync API Endpoint (optional)
-                </label>
+            <div className="settings-section">
+              <div className="settings-section-title">
+                <Globe size={12} style={{marginRight: 6}} /> Connection
+              </div>
+              <div className="settings-row">
+                <label>API Endpoint</label>
                 <input
-                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
-                  placeholder="https://your-api.example.com/v1 (empty = local only)"
+                  type="text"
+                  placeholder="https://api.example.com/v1"
                   value={config.apiBase}
                   onChange={e => setConfig({ ...config, apiBase: e.target.value })}
                 />
-                <div
-                  style={{
-                    marginTop: 6,
-                    fontSize: 12,
-                    color: config.apiBase.trim() ? '#2d6a4f' : '#888'
-                  }}
-                >
-                  {config.apiBase.trim() ? 'Remote sync: ON' : 'Remote sync: OFF (local-only)'}
-                </div>
               </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
-                  User ID (sync only)
-                </label>
+              <div className="settings-row">
+                <label>User ID</label>
                 <input
-                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
+                  type="text"
                   value={config.userId}
-                  disabled={!config.apiBase.trim()}
                   onChange={e => setConfig({ ...config, userId: e.target.value })}
                 />
               </div>
+            </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
-                  Device ID (sync only)
-                </label>
+            <div className="settings-section">
+              <div className="settings-section-title">
+                <Cpu size={12} style={{marginRight: 6}} /> System
+              </div>
+              <div className="settings-row">
+                <label>Global Hotkey</label>
                 <input
-                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
-                  value={config.deviceId}
-                  disabled={!config.apiBase.trim()}
-                  onChange={e => setConfig({ ...config, deviceId: e.target.value })}
+                  type="text"
+                  value={config.hotkey}
+                  onChange={e => setConfig({ ...config, hotkey: e.target.value })}
                 />
               </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
-                  Local retention
-                </label>
-                <select
-                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
-                  value={config.retention}
-                  onChange={e =>
-                    setConfig({ ...config, retention: e.target.value as AppConfig['retention'] })
-                  }
-                >
-                  <option value="30d">30 days</option>
-                  <option value="180d">6 months</option>
-                  <option value="365d">1 year</option>
-                  <option value="forever">Forever</option>
-                </select>
-                <div style={{ marginTop: 6, fontSize: 12, color: '#888' }}>
-                  Favorites are kept when expiring.
-              <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={config.launchAtLogin}
-                    onChange={e => setConfig({ ...config, launchAtLogin: e.target.checked })}
-                  />
-                  Launch at login
-                </label>
+              <div className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.launchAtLogin}
+                  onChange={e => setConfig({ ...config, launchAtLogin: e.target.checked })}
+                />
+                Launch at login
               </div>
+            </div>
 
-                </div>
+            <div className="settings-section">
+              <div className="settings-section-title">
+                <Monitor size={12} style={{marginRight: 6}} /> Capture
               </div>
-
-              <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={config.autoCapture}
-                    onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}
-                  />
-                  Auto-capture clipboard history
-                </label>
+              <div className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.autoCapture}
+                  onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}
+                />
+                Auto-capture clipboard history
               </div>
+            </div>
 
-              <button 
-                onClick={saveConfig}
-                style={{ 
-                  marginTop: 10, 
-                  background: '#007aff', 
-                  color: 'white', 
-                  border: 'none', 
-                  padding: '10px', 
-                  borderRadius: 8, 
-                  fontWeight: 600,
-                  cursor: 'pointer' 
-                }}
-              >
-                Save Changes
-              </button>
+            <div className="settings-actions">
+              <button className="btn-cancel" onClick={() => setShowSettings(false)}>Cancel</button>
+              <button className="btn-save" onClick={saveConfig}>Save Changes</button>
             </div>
           </div>
         </div>

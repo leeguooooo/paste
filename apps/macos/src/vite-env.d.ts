@@ -10,6 +10,7 @@ declare global {
         autoCapture: boolean;
         launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
+        hotkey: string;
       }>;
       setConfig: (next: {
         apiBase: string;
@@ -18,7 +19,8 @@ declare global {
         autoCapture: boolean;
         launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
-      }) => Promise<{ ok: boolean }>;
+        hotkey: string;
+      }) => Promise<{ ok: boolean; message?: string }>;
       listClips: (query?: { q?: string; favorite?: boolean }) => Promise<any>;
       createClip: (payload: {
         content: string;
