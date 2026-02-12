@@ -1469,6 +1469,30 @@ const setupIpc = () => {
 
   ipcMain.handle("window:toggle", async () => toggleMainWindow());
 
+  ipcMain.handle("window:capture", async () => {
+    try {
+      if (!mainWindow) {
+        return { ok: false, message: "window not ready" };
+      }
+
+      const img = await mainWindow.capturePage();
+      if (!img || img.isEmpty()) {
+        return { ok: false, message: "capture returned empty image" };
+      }
+
+      // Settings backdrop doesn't need full-resolution; downscale reduces decode cost.
+      const size = img.getSize();
+      const maxWidth = 1600;
+      const targetWidth = Math.max(1, Math.min(size.width, maxWidth));
+      const targetHeight = Math.max(1, Math.round((size.height * targetWidth) / Math.max(1, size.width)));
+      const resized = targetWidth === size.width ? img : img.resize({ width: targetWidth, height: targetHeight });
+
+      return { ok: true, dataUrl: resized.toDataURL() };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "capture failed" };
+    }
+  });
+
   ipcMain.handle("clipboard:capture-now", async () => captureClipboardNow("manual"));
 };
 

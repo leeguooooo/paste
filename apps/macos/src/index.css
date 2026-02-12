@@ -49,6 +49,7 @@ body {
   box-shadow: 0 -15px 50px rgba(0,0,0,0.5);
   /* 模拟 macOS 原生弹簧动画 */
   animation: springUp 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  will-change: transform, opacity;
 }
 
 @keyframes springUp {
@@ -79,7 +80,11 @@ body {
   font-weight: 500;
   box-shadow: 0 20px 40px rgba(0,0,0,0.4);
   outline: none;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Avoid `transition: all` to reduce style/layout thrash during animations. */
+  transition:
+    width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .search-input:focus {
@@ -111,11 +116,21 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 20px;
   scroll-snap-align: center;
-  transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+  /*
+    Keep transitions on compositor-friendly properties. Animating box-shadow
+    frequently causes repaints and jank in Chromium/Electron.
+  */
+  transition:
+    transform 0.4s cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 0.4s cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 0.4s cubic-bezier(0.23, 1, 0.32, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  transform: translateZ(0);
+  will-change: transform;
+  contain: layout paint;
 }
 
 /* 色带指示器 */
@@ -159,6 +174,14 @@ body {
   justify-content: flex-start;
   overflow: hidden;
   font-family: "SF Mono", Menlo, monospace;
+}
+
+.clip-image-preview {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: 12px;
 }
 
 .preview-text {
@@ -219,13 +242,32 @@ body {
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(25px);
+  background: transparent;
   z-index: 500;
   display: flex;
   align-items: center;
   justify-content: center;
   animation: fadeIn 0.2s ease-out;
+  will-change: opacity;
+}
+
+.settings-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.08);
+  filter: blur(28px) saturate(180%) brightness(90%);
+  pointer-events: none;
+  user-select: none;
+}
+
+.settings-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
 }
 
 .settings-panel {
@@ -237,6 +279,8 @@ body {
   color: white;
   box-shadow: 0 40px 100px rgba(0,0,0,0.6);
   animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+  position: relative;
 }
 
 @keyframes scaleUp {
@@ -341,10 +385,23 @@ body {
   cursor: pointer;
   padding: 6px;
   border-radius: 8px;
-  transition: all 0.2s;
+  transition: color 0.2s, background-color 0.2s;
 }
 
 .icon-btn:hover {
   color: white;
   background: rgba(255, 255, 255, 0.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-shelf,
+  .settings-overlay,
+  .settings-panel {
+    animation: none !important;
+  }
+  .search-input,
+  .clip-card,
+  .icon-btn {
+    transition: none !important;
+  }
 }

@@ -62,11 +62,15 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsBackdropDataUrl, setSettingsBackdropDataUrl] = useState<string | null>(null);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const windowVisibleRef = useRef(false);
   const refreshTimerRef = useRef<number | null>(null);
+  const selectionReasonRef = useRef<"keyboard" | "hover" | "click" | "other">("other");
+  const hoverRafRef = useRef<number | null>(null);
+  const hoverPendingIndexRef = useRef<number | null>(null);
 
   const previewTextById = useMemo(() => {
     const map = new Map<string, string>();
@@ -104,7 +108,7 @@ export default function App() {
 
   useEffect(() => {
     const off = window.macos.onOpenSettings?.(() => {
-      setShowSettings(true);
+      void openSettings();
     });
     return () => {
       try {
@@ -159,8 +163,33 @@ export default function App() {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
       }
+      if (hoverRafRef.current) {
+        window.cancelAnimationFrame(hoverRafRef.current);
+        hoverRafRef.current = null;
+      }
     };
   }, [loadClips, query, showSettings]);
+
+  const openSettings = useCallback(async () => {
+    if (showSettings) return;
+    setSettingsBackdropDataUrl(null);
+
+    try {
+      const res = await window.macos.captureWindow();
+      if (res?.ok && typeof res.dataUrl === "string" && res.dataUrl.startsWith("data:image/")) {
+        setSettingsBackdropDataUrl(res.dataUrl);
+      }
+    } catch {
+      // ignore; settings will still open (without frozen backdrop)
+    } finally {
+      setShowSettings(true);
+    }
+  }, [showSettings]);
+
+  const closeSettings = useCallback(() => {
+    setShowSettings(false);
+    setSettingsBackdropDataUrl(null);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadClips(), 150);
@@ -221,14 +250,14 @@ export default function App() {
     if (cardRightPos > viewRight - padding) {
       container.scrollTo({
         left: cardRightPos - containerWidth + padding,
-        behavior: "smooth"
+        behavior: selectionReasonRef.current === "hover" ? "auto" : "smooth"
       });
     } 
     // 如果卡片超出了左边界
     else if (cardLeftPos < viewLeft + padding) {
       container.scrollTo({
         left: cardLeftPos - padding,
-        behavior: "smooth"
+        behavior: selectionReasonRef.current === "hover" ? "auto" : "smooth"
       });
     }
   }, [selectedIndex, clips.length]);
@@ -287,10 +316,12 @@ export default function App() {
       switch (e.key) {
         case "ArrowRight":
           e.preventDefault();
+          selectionReasonRef.current = "keyboard";
           setSelectedIndex(prev => Math.min(prev + 1, clips.length - 1));
           break;
         case "ArrowLeft":
           e.preventDefault();
+          selectionReasonRef.current = "keyboard";
           setSelectedIndex(prev => Math.max(prev - 1, 0));
           break;
         case "Enter":
@@ -317,7 +348,7 @@ export default function App() {
         case ",":
           if (e.metaKey) {
             e.preventDefault();
-            setShowSettings(true);
+            void openSettings();
           }
           break;
         default:
@@ -335,7 +366,19 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clips, selectedIndex, showSettings, query]);
+  }, [clips, selectedIndex, showSettings, query, openSettings]);
+
+  const setSelectedIndexFromHover = useCallback((index: number) => {
+    selectionReasonRef.current = "hover";
+    hoverPendingIndexRef.current = index;
+    if (hoverRafRef.current != null) return;
+    hoverRafRef.current = window.requestAnimationFrame(() => {
+      hoverRafRef.current = null;
+      const nextIndex = hoverPendingIndexRef.current;
+      if (nextIndex == null) return;
+      setSelectedIndex((prev) => (prev === nextIndex ? prev : nextIndex));
+    });
+  }, []);
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -394,7 +437,7 @@ export default function App() {
 
   return (
     <main 
-      className={`app-shell ${clips.length > 0 ? 'active' : ''}`} 
+      className={`app-shell ${clips.length > 0 ? 'active' : ''} ${showSettings ? 'settings-open' : ''}`} 
       onClick={async (e) => {
         if (e.target === e.currentTarget) {
           await window.macos.toggleWindow();
@@ -421,7 +464,7 @@ export default function App() {
             </div>
             <button 
               className="icon-btn" 
-              onClick={() => setShowSettings(true)}
+              onClick={() => void openSettings()}
               style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
               title="Settings (Cmd+,)"
             >
@@ -439,8 +482,14 @@ export default function App() {
                 key={clip.id} 
                 className={`clip-card ${isSelected ? 'selected' : ''}`}
                 data-type={clip.type}
-                onMouseEnter={() => setSelectedIndex((prev) => (prev === index ? prev : index))}
-                onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
+                onMouseEnter={() => {
+                  setSelectedIndexFromHover(index);
+                }}
+                onClick={() => {
+                  selectionReasonRef.current = "click";
+                  setSelectedIndex(index);
+                  void handleCopy(clip);
+                }}
               >
                 <div className="clip-preview">
                   {renderPreview(clip)}
@@ -467,11 +516,21 @@ export default function App() {
       </div>
 
       {showSettings && (
-        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
+        <div className="settings-overlay" onClick={closeSettings}>
+          {settingsBackdropDataUrl && (
+            <img
+              className="settings-backdrop"
+              src={settingsBackdropDataUrl}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+            />
+          )}
+          <div className="settings-scrim" aria-hidden="true" />
           <div className="settings-panel" onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
               <h2 style={{ margin: 0 }}>Preferences</h2>
-              <button className="icon-btn" onClick={() => setShowSettings(false)}>
+              <button className="icon-btn" onClick={closeSettings}>
                 <X size={24} />
               </button>
             </div>
@@ -536,7 +595,7 @@ export default function App() {
             </div>
 
             <div className="settings-actions">
-              <button className="btn-cancel" onClick={() => setShowSettings(false)}>Cancel</button>
+              <button className="btn-cancel" onClick={closeSettings}>Cancel</button>
               <button className="btn-save" onClick={saveConfig}>Save Changes</button>
             </div>
           </div>
