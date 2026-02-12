@@ -8,9 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "pages:dev": "wrangler pages dev ./dist",
-    "pages:deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-marketing --branch main",
+    "pages:deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web --branch main --commit-dirty=true --commit-message \"deploy web\"",
     "typecheck": "tsc --noEmit",
-    "deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-marketing --branch main"
+    "deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web --branch main --commit-dirty=true --commit-message \"deploy web\""
   },
   "dependencies": {
     "@paste/shared": "0.1.0",

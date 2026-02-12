@@ -37,6 +37,7 @@ let lastClipboardProbeFingerprint = "";
 let lastClipboardFailure = { fingerprint: "", at: 0 };
 let captureClipboardInFlight = null;
 let captureClipboardInFlightProbe = "";
+let recentClipboardFingerprints = new Map(); // fingerprint -> lastSeenAt (ms)
 let registeredHotkey = null;
 let hotkeyStatus = { ok: true, hotkey: null, corrected: false, message: null };
 let lastTargetApp = { name: "", bundleId: "", at: 0 };
@@ -395,7 +396,9 @@ const localDeleteClip = (cfg, id) => {
 const isProbablyUrl = (value) => /^https?:\/\/\S+$/i.test((value || "").trim());
 
 const extractUrlFromHtml = (value) => {
-  const match = (value || "").match(/href\s*=\s*['"]([^'"]+)['"]/i);
+  // Only treat actual anchor tags as link sources; other tags may contain href
+  // attributes (e.g. <link ...>) which should not make the clip a URL.
+  const match = (value || "").match(/<a\b[^>]*\bhref\s*=\s*['"]([^'"]+)['"]/i);
   if (!match?.[1]) {
     return null;
   }
@@ -573,7 +576,9 @@ const buildClipboardPayload = () => {
       payload: {
         type: sourceUrl ? "link" : "html",
         content: plain || "[HTML]",
-        summary: (plain || sourceUrl || "HTML").slice(0, 120),
+        // For link clips where the visible text isn't the URL, show the URL in
+        // the preview so the "LINK" type isn't confusing.
+        summary: (sourceUrl || plain || "HTML").slice(0, 120),
         contentHtml: richHtml,
         sourceUrl,
         imageDataUrl: null,
@@ -630,6 +635,25 @@ const syncClipboardFingerprintsFromSystemClipboard = () => {
   } catch {
     // ignore
   }
+};
+
+const seenClipboardFingerprintRecently = (fingerprint, now, windowMs) => {
+  if (!fingerprint) return false;
+
+  // Prune on read to keep the map small.
+  for (const [k, at] of recentClipboardFingerprints.entries()) {
+    if (!at || now - at > windowMs) {
+      recentClipboardFingerprints.delete(k);
+    }
+  }
+
+  const prev = recentClipboardFingerprints.get(fingerprint) || 0;
+  if (prev && now - prev <= windowMs) {
+    recentClipboardFingerprints.set(fingerprint, now);
+    return true;
+  }
+  recentClipboardFingerprints.set(fingerprint, now);
+  return false;
 };
 
 const hashPrefix = (buf) => {
@@ -773,6 +797,15 @@ const captureClipboardNow = async (source = "manual") => {
     }
 
     const fingerprint = payloadFingerprint(built.payload);
+    // Prevent A,B,A loops from generating duplicates when the clipboard alternates
+    // between values (common when copying/pasting quickly).
+    if (source === "watcher") {
+      const DUP_WINDOW_MS = 60_000;
+      if (seenClipboardFingerprintRecently(fingerprint, Date.now(), DUP_WINDOW_MS)) {
+        if (probe) lastClipboardProbeFingerprint = probe;
+        return { ok: true, captured: false, reason: "duplicated" };
+      }
+    }
     if (fingerprint === lastClipboardFingerprint && source !== "manual") {
       if (probe) lastClipboardProbeFingerprint = probe;
       return { ok: true, captured: false, reason: "duplicated" };

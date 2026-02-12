@@ -77,6 +77,150 @@ const formatAgeShort = (createdAtMs: number): string => {
   return `${Math.floor(delta / 86_400_000)}d`;
 };
 
+const normalizeHttpUrl = (raw: string): string => {
+  const s = String(raw || "").trim();
+  if (!/^https?:\/\//i.test(s)) return s;
+  try {
+    const u = new URL(s);
+    u.hash = "";
+    u.hostname = u.hostname.toLowerCase();
+    u.protocol = u.protocol.toLowerCase();
+    if ((u.protocol === "http:" && u.port === "80") || (u.protocol === "https:" && u.port === "443")) {
+      u.port = "";
+    }
+    return u.toString();
+  } catch {
+    return s;
+  }
+};
+
+const imageKeyFromClip = (c: ClipItem): string => {
+  const url = typeof c.imageUrl === "string" ? c.imageUrl.trim() : "";
+  if (url) {
+    try {
+      const u = new URL(url, window.location.origin);
+      const h = u.searchParams.get("h");
+      if (h) return `sha256:${h}`;
+    } catch {
+      // ignore
+    }
+  }
+
+  const raw =
+    (typeof c.imagePreviewDataUrl === "string" && c.imagePreviewDataUrl) ||
+    (typeof c.imageDataUrl === "string" && c.imageDataUrl) ||
+    "";
+  if (!raw) return "";
+  return `data:${raw.slice(0, 64)}:${raw.length}`;
+};
+
+const dedupeRecentItems = (items: ClipItem[]): ClipItem[] => {
+  // Keep the newest occurrence; always keep favorites.
+  // Use a time window to avoid deleting legitimate repeats far apart.
+  const DEDUPE_WINDOW_MS = 10 * 60_000;
+  const firstSeenAtByKey = new Map<string, number>();
+  const out: ClipItem[] = [];
+
+  const keyOf = (c: ClipItem): string => {
+    const content = String(c.content || "").trim();
+    const sourceUrl = String(c.sourceUrl || "").trim();
+
+    if (
+      c.type === "link" ||
+      /^https?:\/\//i.test(content) ||
+      /^https?:\/\//i.test(sourceUrl)
+    ) {
+      const url = normalizeHttpUrl(sourceUrl || content);
+      return url ? `link:${url}` : "";
+    }
+
+    if (c.type === "image") {
+      const imgKey = imageKeyFromClip(c);
+      return imgKey ? `image:${imgKey}` : "";
+    }
+
+    // text/code/html: de-dupe by trimmed content (and html when present).
+    const html = String(c.contentHtml || "").trim();
+    const normText = content.replace(/\s+/g, " ").slice(0, 500);
+    const normHtml = html ? html.replace(/\s+/g, " ").slice(0, 500) : "";
+    if (!normText && !normHtml) return "";
+    return `${c.type}:${normText}:${normHtml}`;
+  };
+
+  for (const c of items) {
+    if (c.isFavorite) {
+      out.push(c);
+      continue;
+    }
+
+    const key = keyOf(c);
+    if (!key) {
+      out.push(c);
+      continue;
+    }
+
+    const at = Number.isFinite(c.createdAt) ? c.createdAt : 0;
+    const seenAt = firstSeenAtByKey.get(key);
+    if (seenAt !== undefined && Math.abs(seenAt - at) <= DEDUPE_WINDOW_MS) {
+      continue;
+    }
+    firstSeenAtByKey.set(key, at);
+    out.push(c);
+  }
+
+  return out;
+};
+
+const collapseConsecutiveDuplicates = (items: ClipItem[]): ClipItem[] => {
+  // List results are newest-first. Collapse accidental duplicate runs created by
+  // watcher/self-capture loops.
+  const WINDOW_MS = 60_000;
+  const keyOf = (c: ClipItem): string => {
+    const content = (c.content || "").trim().slice(0, 200);
+    const html = (c.contentHtml || "").trim().slice(0, 200);
+    const src = (c.sourceUrl || "").trim();
+    const imgRaw =
+      (typeof c.imageUrl === "string" && c.imageUrl.trim()) ||
+      (typeof c.imagePreviewDataUrl === "string" && c.imagePreviewDataUrl) ||
+      (typeof c.imageDataUrl === "string" && c.imageDataUrl) ||
+      "";
+    const img = imgRaw ? `${imgRaw.slice(0, 64)}:${imgRaw.length}` : "";
+    return [c.type, content, src, html, img].join("|");
+  };
+
+  const out: ClipItem[] = [];
+  let run: ClipItem[] = [];
+  let runKey = "";
+
+  const flush = () => {
+    if (run.length === 0) return;
+    const pick = run.find((c) => c.isFavorite) || run[0];
+    out.push(pick);
+    run = [];
+    runKey = "";
+  };
+
+  for (const item of items) {
+    const k = keyOf(item);
+    if (run.length === 0) {
+      run = [item];
+      runKey = k;
+      continue;
+    }
+    const prev = run[0];
+    const closeEnough = Math.abs((prev.createdAt ?? 0) - (item.createdAt ?? 0)) <= WINDOW_MS;
+    if (k && k === runKey && closeEnough) {
+      run.push(item);
+      continue;
+    }
+    flush();
+    run = [item];
+    runKey = k;
+  }
+  flush();
+  return out;
+};
+
 const DEMO_SVG_DATA_URL =
   "data:image/svg+xml;base64," +
   btoa(
@@ -201,8 +345,11 @@ export default function App() {
     try {
       const res = await window.macos.listClips({ q: query || undefined });
       if (res?.ok) {
-        setClips(res.data.items ?? []);
-        if (isInitial) setSelectedIndex(0);
+        const nextItems = dedupeRecentItems(collapseConsecutiveDuplicates(res.data.items ?? []));
+        setClips(nextItems);
+        setSelectedIndex((prev) =>
+          isInitial ? 0 : Math.min(prev, Math.max(0, nextItems.length - 1))
+        );
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -369,8 +516,8 @@ export default function App() {
     }
   }, [selectedIndex, clips.length]);
 
-  const handleCopy = async (clip: ClipItem) => {
-    let effective = clip;
+	  const handleCopy = async (clip: ClipItem) => {
+	    let effective = clip;
     if (
       clip.type === "image" &&
       !isValidImageDataUrl(clip.imageDataUrl) &&
@@ -387,12 +534,17 @@ export default function App() {
       }
     }
 
-    const text = effective.content || effective.sourceUrl || "";
-    const res = await window.macos.pasteAndHide({
-      text,
-      html: effective.contentHtml ?? null,
-      imageDataUrl: effective.imageDataUrl ?? null,
-      imageUrl: effective.imageUrl ?? null
+	    // For link clips, use the URL as the plain-text fallback so pasting into
+	    // non-rich-text fields still produces a usable link.
+	    const text =
+	      effective.type === "link" && typeof effective.sourceUrl === "string" && effective.sourceUrl.trim()
+	        ? effective.sourceUrl.trim()
+	        : (effective.content || effective.sourceUrl || "");
+	    const res = await window.macos.pasteAndHide({
+	      text,
+	      html: effective.contentHtml ?? null,
+	      imageDataUrl: effective.imageDataUrl ?? null,
+	      imageUrl: effective.imageUrl ?? null
     });
     if (!res?.ok) {
       // Surface the root error (most commonly missing Accessibility permission).

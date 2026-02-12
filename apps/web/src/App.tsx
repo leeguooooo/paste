@@ -58,6 +58,152 @@ const formatAgeShort = (createdAtMs: number): string => {
   return `${Math.floor(delta / 86_400_000)}d`;
 };
 
+const normalizeHttpUrl = (raw: string): string => {
+  const s = String(raw || "").trim();
+  if (!/^https?:\/\//i.test(s)) return s;
+  try {
+    const u = new URL(s);
+    u.hash = "";
+    // Canonicalize host/protocol casing.
+    u.hostname = u.hostname.toLowerCase();
+    u.protocol = u.protocol.toLowerCase();
+    // Drop default ports.
+    if ((u.protocol === "http:" && u.port === "80") || (u.protocol === "https:" && u.port === "443")) {
+      u.port = "";
+    }
+    return u.toString();
+  } catch {
+    return s;
+  }
+};
+
+const imageKeyFromClip = (c: ClipItem): string => {
+  const url = typeof c.imageUrl === "string" ? c.imageUrl.trim() : "";
+  if (url) {
+    try {
+      const u = new URL(url, window.location.origin);
+      const h = u.searchParams.get("h");
+      if (h) return `sha256:${h}`;
+    } catch {
+      // ignore
+    }
+  }
+
+  const raw =
+    (typeof c.imagePreviewDataUrl === "string" && c.imagePreviewDataUrl) ||
+    (typeof c.imageDataUrl === "string" && c.imageDataUrl) ||
+    "";
+  if (!raw) return "";
+  return `data:${raw.slice(0, 64)}:${raw.length}`;
+};
+
+const dedupeRecentItems = (items: ClipItem[]): ClipItem[] => {
+  // Keep the newest occurrence; always keep favorites.
+  // Use a time window to avoid deleting legitimate repeats far apart.
+  const DEDUPE_WINDOW_MS = 10 * 60_000;
+  const firstSeenAtByKey = new Map<string, number>();
+  const out: ClipItem[] = [];
+
+  const keyOf = (c: ClipItem): string => {
+    const content = String(c.content || "").trim();
+    const sourceUrl = String(c.sourceUrl || "").trim();
+
+    if (
+      c.type === "link" ||
+      /^https?:\/\//i.test(content) ||
+      /^https?:\/\//i.test(sourceUrl)
+    ) {
+      const url = normalizeHttpUrl(sourceUrl || content);
+      return url ? `link:${url}` : "";
+    }
+
+    if (c.type === "image") {
+      const imgKey = imageKeyFromClip(c);
+      return imgKey ? `image:${imgKey}` : "";
+    }
+
+    // text/code/html: de-dupe by trimmed content (and html when present).
+    const html = String(c.contentHtml || "").trim();
+    const normText = content.replace(/\s+/g, " ").slice(0, 500);
+    const normHtml = html ? html.replace(/\s+/g, " ").slice(0, 500) : "";
+    if (!normText && !normHtml) return "";
+    return `${c.type}:${normText}:${normHtml}`;
+  };
+
+  for (const c of items) {
+    if (c.isFavorite) {
+      out.push(c);
+      continue;
+    }
+
+    const key = keyOf(c);
+    if (!key) {
+      out.push(c);
+      continue;
+    }
+
+    const at = Number.isFinite(c.createdAt) ? c.createdAt : 0;
+    const seenAt = firstSeenAtByKey.get(key);
+    if (seenAt !== undefined && Math.abs(seenAt - at) <= DEDUPE_WINDOW_MS) {
+      continue;
+    }
+    firstSeenAtByKey.set(key, at);
+    out.push(c);
+  }
+
+  return out;
+};
+
+const collapseConsecutiveDuplicates = (items: ClipItem[]): ClipItem[] => {
+  // List results are newest-first. Collapse accidental duplicate runs created by
+  // watcher/self-capture loops.
+  const WINDOW_MS = 60_000;
+  const keyOf = (c: ClipItem): string => {
+    const content = (c.content || "").trim().slice(0, 200);
+    const html = (c.contentHtml || "").trim().slice(0, 200);
+    const src = (c.sourceUrl || "").trim();
+    const imgRaw =
+      (typeof c.imageUrl === "string" && c.imageUrl.trim()) ||
+      (typeof c.imagePreviewDataUrl === "string" && c.imagePreviewDataUrl) ||
+      (typeof c.imageDataUrl === "string" && c.imageDataUrl) ||
+      "";
+    const img = imgRaw ? `${imgRaw.slice(0, 64)}:${imgRaw.length}` : "";
+    return [c.type, content, src, html, img].join("|");
+  };
+
+  const out: ClipItem[] = [];
+  let run: ClipItem[] = [];
+  let runKey = "";
+
+  const flush = () => {
+    if (run.length === 0) return;
+    const pick = run.find((c) => c.isFavorite) || run[0];
+    out.push(pick);
+    run = [];
+    runKey = "";
+  };
+
+  for (const item of items) {
+    const k = keyOf(item);
+    if (run.length === 0) {
+      run = [item];
+      runKey = k;
+      continue;
+    }
+    const prev = run[0];
+    const closeEnough = Math.abs((prev.createdAt ?? 0) - (item.createdAt ?? 0)) <= WINDOW_MS;
+    if (k && k === runKey && closeEnough) {
+      run.push(item);
+      continue;
+    }
+    flush();
+    run = [item];
+    runKey = k;
+  }
+  flush();
+  return out;
+};
+
 const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
   const now = Date.now();
   const base = {
@@ -156,8 +302,11 @@ export default function App() {
       });
       const data: ApiResponse<ClipListResponse> = await res.json();
       if (data.ok) {
-        setClips(data.data.items);
-        if (isInitial) setSelectedIndex(0);
+        const nextItems = dedupeRecentItems(collapseConsecutiveDuplicates(data.data.items));
+        setClips(nextItems);
+        setSelectedIndex((prev) =>
+          isInitial ? 0 : Math.min(prev, Math.max(0, nextItems.length - 1))
+        );
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -252,9 +401,9 @@ export default function App() {
     scrollContainerRef.current.scrollTo({ left: targetScroll, behavior: "smooth" });
   }, [selectedIndex, clips]);
 
-  const handleCopy = async (clip: ClipItem) => {
-    try {
-      let effective = clip;
+	  const handleCopy = async (clip: ClipItem) => {
+	    try {
+	      let effective = clip;
       if (
         clip.type === "image" &&
         !isValidImageDataUrl(clip.imageDataUrl) &&
@@ -273,21 +422,29 @@ export default function App() {
         const ClipboardItemCtor = (window as any).ClipboardItem as any;
         if (!ClipboardItemCtor) throw new Error("ClipboardItem not supported");
         await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
-      } else if (effective.type === "image" && typeof effective.imageUrl === "string" && effective.imageUrl.trim()) {
-        const blob = await (await fetch(effective.imageUrl)).blob();
-        const ClipboardItemCtor = (window as any).ClipboardItem as any;
-        if (!ClipboardItemCtor) throw new Error("ClipboardItem not supported");
-        await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
-      } else {
-        await navigator.clipboard.writeText(effective.content);
-      }
-    } catch {
-      await navigator.clipboard.writeText(clip.content);
-    }
+	      } else if (effective.type === "image" && typeof effective.imageUrl === "string" && effective.imageUrl.trim()) {
+	        const blob = await (await fetch(effective.imageUrl)).blob();
+	        const ClipboardItemCtor = (window as any).ClipboardItem as any;
+	        if (!ClipboardItemCtor) throw new Error("ClipboardItem not supported");
+	        await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
+	      } else {
+	        const text =
+	          effective.type === "link" && typeof effective.sourceUrl === "string" && effective.sourceUrl.trim()
+	            ? effective.sourceUrl.trim()
+	            : effective.content;
+	        await navigator.clipboard.writeText(text);
+	      }
+	    } catch {
+	      const fallback =
+	        clip.type === "link" && typeof clip.sourceUrl === "string" && clip.sourceUrl.trim()
+	          ? clip.sourceUrl.trim()
+	          : clip.content;
+	      await navigator.clipboard.writeText(fallback);
+	    }
 
-    setCopiedId(clip.id);
-    window.setTimeout(() => setCopiedId((prev) => (prev === clip.id ? null : prev)), 900);
-  };
+	    setCopiedId(clip.id);
+	    window.setTimeout(() => setCopiedId((prev) => (prev === clip.id ? null : prev)), 900);
+	  };
 
   const handleCopyDemo = async (clip: ClipCardItem) => {
     try {
