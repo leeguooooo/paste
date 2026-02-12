@@ -31,6 +31,8 @@ let clipboardTimer = null;
 let lastClipboardFingerprint = "";
 let lastClipboardProbeFingerprint = "";
 let lastClipboardFailure = { fingerprint: "", at: 0 };
+let captureClipboardInFlight = null;
+let captureClipboardInFlightProbe = "";
 let registeredHotkey = null;
 
 const RELEASES_LATEST_URL = "https://github.com/leeguooooo/paste/releases/latest";
@@ -510,6 +512,22 @@ const captureClipboardNow = async (source = "manual") => {
   if (probe && probe === lastClipboardProbeFingerprint) {
     return { ok: true, captured: false, reason: "duplicated" };
   }
+  // If a capture is already running, skip watcher ticks to prevent overlapping
+  // requests inserting the same clip multiple times (common when network is slow).
+  if (probe && probe === captureClipboardInFlightProbe && source !== "manual") {
+    return { ok: true, captured: false, reason: "duplicated" };
+  }
+  if (captureClipboardInFlight) {
+    if (source === "manual") {
+      try {
+        await captureClipboardInFlight;
+      } catch {
+        // ignore; manual capture will retry below
+      }
+    } else {
+      return { ok: true, captured: false, reason: "busy" };
+    }
+  }
   const now = Date.now();
   if (
     probe &&
@@ -520,28 +538,38 @@ const captureClipboardNow = async (source = "manual") => {
     return { ok: true, captured: false, reason: "retry-backoff" };
   }
 
-  const built = buildClipboardPayload();
-  if (!built.ok || !built.captured) {
-    return built;
-  }
+  captureClipboardInFlightProbe = probe || "";
+  captureClipboardInFlight = (async () => {
+    const built = buildClipboardPayload();
+    if (!built.ok || !built.captured) {
+      return built;
+    }
 
-  const fingerprint = payloadFingerprint(built.payload);
-  if (fingerprint === lastClipboardFingerprint && source !== "manual") {
-    if (probe) lastClipboardProbeFingerprint = probe;
-    return { ok: true, captured: false, reason: "duplicated" };
-  }
+    const fingerprint = payloadFingerprint(built.payload);
+    if (fingerprint === lastClipboardFingerprint && source !== "manual") {
+      if (probe) lastClipboardProbeFingerprint = probe;
+      return { ok: true, captured: false, reason: "duplicated" };
+    }
 
-  const result = await createClipFromPayload(built.payload, source);
-  if (result.ok && result.captured) {
-    lastClipboardFingerprint = fingerprint;
-    if (probe) lastClipboardProbeFingerprint = probe;
-    lastClipboardFailure = { fingerprint: "", at: 0 };
-    broadcastToWindows("clips:changed", { source, at: Date.now() });
-  } else if (probe && source !== "manual") {
-    // Avoid re-encoding the same clipboard payload every tick when network is down.
-    lastClipboardFailure = { fingerprint: probe, at: Date.now() };
+    const result = await createClipFromPayload(built.payload, source);
+    if (result.ok && result.captured) {
+      lastClipboardFingerprint = fingerprint;
+      if (probe) lastClipboardProbeFingerprint = probe;
+      lastClipboardFailure = { fingerprint: "", at: 0 };
+      broadcastToWindows("clips:changed", { source, at: Date.now() });
+    } else if (probe && source !== "manual") {
+      // Avoid re-encoding the same clipboard payload every tick when network is down.
+      lastClipboardFailure = { fingerprint: probe, at: Date.now() };
+    }
+    return result;
+  })();
+
+  try {
+    return await captureClipboardInFlight;
+  } finally {
+    captureClipboardInFlight = null;
+    captureClipboardInFlightProbe = "";
   }
-  return result;
 };
 
 const safeLoadURL = async (win, url) => {

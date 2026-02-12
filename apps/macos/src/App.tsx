@@ -228,12 +228,11 @@ export default function App() {
     }
 
     const text = effective.content || effective.sourceUrl || "";
-    await window.macos.writeClipboard({
+    await window.macos.pasteAndHide({
       text,
       html: effective.contentHtml ?? null,
       imageDataUrl: effective.imageDataUrl ?? null
     });
-    await window.macos.toggleWindow();
   };
 
   const handleDelete = async (id: string) => {
