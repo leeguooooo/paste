@@ -3,6 +3,9 @@
   --card-height: 200px;
   --gap: 28px;
   --primary: #007aff;
+  --card-bg: #ffffff;
+  --card-fg: #0f172a;
+  --card-muted: rgba(15, 23, 42, 0.55);
   /* 调高不透明度，从 0.75 -> 0.92，增加实体感 */
   --shelf-bg: rgba(32, 32, 32, 0.92);
   /* Paste 风格的超大柔和投影 */
@@ -112,9 +115,10 @@ body {
 .clip-card {
   flex: 0 0 var(--card-width);
   height: var(--card-height);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 20px;
+  background: var(--card-bg);
+  color: var(--card-fg);
+  border: 1px solid rgba(2, 6, 23, 0.10);
+  border-radius: 18px;
   scroll-snap-align: center;
   /*
     Keep transitions on compositor-friendly properties. Animating box-shadow
@@ -122,8 +126,7 @@ body {
   */
   transition:
     transform 0.4s cubic-bezier(0.23, 1, 0.32, 1),
-    background-color 0.4s cubic-bezier(0.23, 1, 0.32, 1),
-    border-color 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+    border-color 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -131,49 +134,96 @@ body {
   transform: translateZ(0);
   will-change: transform;
   contain: layout paint;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.22),
+    0 2px 0 rgba(255, 255, 255, 0.25) inset;
 }
-
-/* 色带指示器 */
-.clip-card::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 5px;
-  opacity: 0.8;
-}
-.clip-card[data-type="text"]::after { background: #007aff; }
-.clip-card[data-type="link"]::after { background: #34c759; }
-.clip-card[data-type="image"]::after { background: #af52de; }
-.clip-card[data-type="code"]::after { background: #ff9500; }
 
 .clip-card:hover {
   transform: translateY(-6px) scale(1.04);
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: color-mix(in srgb, var(--accent, var(--primary)) 60%, rgba(2, 6, 23, 0.10));
   box-shadow: 0 10px 30px rgba(0,0,0,0.3);
 }
 
 .clip-card.selected {
   transform: scale(1.08) translateY(-12px);
-  background: rgba(255, 255, 255, 0.15);
-  border: 2px solid var(--primary);
+  border: 2px solid color-mix(in srgb, var(--accent, var(--primary)) 70%, rgba(2, 6, 23, 0.10));
   box-shadow: var(--shadow-lifted);
   z-index: 10;
 }
+
+.clip-head {
+  height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent, var(--primary)) 78%, white),
+      color-mix(in srgb, var(--accent, var(--primary)) 55%, white)
+    );
+  border-bottom: 1px solid rgba(2, 6, 23, 0.06);
+}
+
+.clip-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.clip-type {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+  color: rgba(2, 6, 23, 0.75);
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(2, 6, 23, 0.08);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+}
+
+.clip-age {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(2, 6, 23, 0.55);
+}
+
+.clip-fav {
+  appearance: none;
+  border: 0;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(2, 6, 23, 0.08);
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(2, 6, 23, 0.55);
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s, color 0.15s;
+}
+
+.clip-fav:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.75); color: rgba(2, 6, 23, 0.75); }
+.clip-fav.on { color: rgba(2, 6, 23, 0.9); }
 
 .clip-preview {
   flex: 1;
   padding: 20px;
   font-size: 14px;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--card-fg);
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
   overflow: hidden;
-  font-family: "SF Mono", Menlo, monospace;
+  background:
+    radial-gradient(60px 60px at 20% 20%, rgba(0, 0, 0, 0.04), transparent 60%),
+    radial-gradient(80px 80px at 80% 30%, rgba(0, 0, 0, 0.03), transparent 55%);
 }
 
 .clip-image-preview {
@@ -181,7 +231,9 @@ body {
   height: 100%;
   display: block;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.04);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
 }
 
 .preview-text {
@@ -191,51 +243,40 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-all;
+  color: rgba(2, 6, 23, 0.86);
 }
 
 .clip-footer {
   height: 38px;
   padding: 0 16px;
-  background: rgba(0,0,0,0.25);
+  background: rgba(2, 6, 23, 0.03);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
-  color: rgba(255,255,255,0.4);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.clip-meta {
-  display: flex;
-  align-items: center;
   gap: 10px;
-  min-width: 0;
+  font-size: 11px;
+  color: var(--card-muted);
+  font-weight: 700;
 }
 
-.clip-meta-item {
+.clip-device {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
+  color: rgba(2, 6, 23, 0.55);
 }
 
-.clip-meta-item span {
+.clip-device span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.clip-meta-sep {
-  opacity: 0.6;
-}
-
-/* 提示图标 */
-.shortcut-hint {
-  background: rgba(255,255,255,0.1);
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: rgba(255,255,255,0.6);
+.clip-hint {
+  color: rgba(2, 6, 23, 0.42);
+  font-weight: 800;
+  letter-spacing: 0.08em;
 }
 
 /* --- Settings & Preferences --- */
