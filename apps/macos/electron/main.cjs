@@ -10,7 +10,8 @@ const {
   nativeImage,
   ipcMain,
   screen,
-  shell
+  shell,
+  systemPreferences
 } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -62,6 +63,27 @@ const runAppleScript = (lines) => {
       resolve(String(stdout || "").trim());
     });
   });
+};
+
+const openAccessibilityPrefs = async () => {
+  try {
+    // Works on recent macOS versions.
+    await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+  } catch {
+    // ignore
+  }
+};
+
+const ensureAccessibilityTrusted = () => {
+  try {
+    if (process.platform !== "darwin") return { ok: true };
+    if (systemPreferences.isTrustedAccessibilityClient(false)) return { ok: true };
+    // Trigger the system prompt (may no-op depending on context, but harmless).
+    systemPreferences.isTrustedAccessibilityClient(true);
+    return { ok: false };
+  } catch {
+    return { ok: false };
+  }
 };
 
 const getFrontmostApp = () => {
@@ -1167,6 +1189,20 @@ const setupIpc = () => {
 
   ipcMain.handle("clipboard:paste-and-hide", async (_, value) => {
     try {
+      const ax = ensureAccessibilityTrusted();
+      if (!ax.ok) {
+        void openAccessibilityPrefs();
+        return {
+          ok: false,
+          message:
+            `macOS blocked synthetic keystrokes.\n\n` +
+            `Please enable Accessibility for the running app:\n` +
+            `- If you run via npm (dev): enable Accessibility for "Electron"\n` +
+            `- If you run the built app: enable Accessibility for "paste"\n\n` +
+            `System Settings -> Privacy & Security -> Accessibility`
+        };
+      }
+
       // 1. 先执行写入剪贴板逻辑 (调用内部已有的逻辑或重用部分代码)
       const text = typeof value === "string" ? value : value?.text || "";
       const html = typeof value === "string" ? null : value?.html || null;
@@ -1193,6 +1229,27 @@ const setupIpc = () => {
       if (process.platform === "darwin") {
         const targetBundleId = lastTargetApp?.bundleId || "";
         const targetName = lastTargetApp?.name || "";
+        const targetCapturedAt = lastTargetApp?.at || 0;
+
+        if (!targetBundleId && !targetName) {
+          // Still try to paste to whatever is frontmost after hiding, but include diagnostics.
+          try {
+            await runAppleScript(['tell application "System Events" to keystroke "v" using {command down}']);
+            return {
+              ok: true,
+              message: "pasted without target app (no target captured)"
+            };
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : "paste failed";
+            return {
+              ok: false,
+              message:
+                `paste failed: ${msg}\n\n` +
+                `No target app was captured before opening the overlay.\n` +
+                `If this keeps happening, enable Accessibility for "${app.getName()}" in System Settings -> Privacy & Security -> Accessibility.`
+            };
+          }
+        }
         if (targetBundleId) {
           try {
             await runAppleScript([`tell application id "${targetBundleId}" to activate`]);
@@ -1202,7 +1259,7 @@ const setupIpc = () => {
         }
 
         // Wait until the original app is truly frontmost; fixed sleeps are flaky.
-        await waitForFrontmostApp({ name: targetName, bundleId: targetBundleId, timeoutMs: 1500 });
+        const frontOk = await waitForFrontmostApp({ name: targetName, bundleId: targetBundleId, timeoutMs: 1500 });
         try {
           if (targetName) {
             const safeName = String(targetName).replace(/\"/g, "\\\"");
@@ -1216,10 +1273,15 @@ const setupIpc = () => {
           }
         } catch (error) {
           const msg = error instanceof Error ? error.message : "paste failed";
+          const front = getFrontmostApp();
           return {
             ok: false,
             message:
               `paste failed: ${msg}\n\n` +
+              `Target app: ${targetName || "(unknown)"} (${targetBundleId || "no bundle id"})\n` +
+              `Captured at: ${targetCapturedAt ? new Date(targetCapturedAt).toISOString() : "(unknown)"}\n` +
+              `Frontmost before paste: ${front.name || "(unknown)"} (${front.bundleId || "no bundle id"})\n` +
+              `Frontmost matched target: ${frontOk ? "yes" : "no"}\n\n` +
               `If this keeps happening, enable Accessibility for "${app.getName()}" in System Settings -> Privacy & Security -> Accessibility.`
           };
         }
