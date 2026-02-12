@@ -10,6 +10,21 @@ Open-source, free **Paste.app alternative**.
 - Local-first: no URL required; empty URL means local-only (no remote sync)
 - Optional sync: Cloudflare Workers + D1 (and R2 later for large blobs)
 
+## Quick Start
+
+1. Download the latest build from GitHub Releases (macOS `x64` / `arm64`).
+2. Open app, use the global hotkey to show the Quick Paste panel.
+3. Optional: configure `API Base` to enable cross-device sync.
+
+## macOS Notes
+
+- Auto-paste requires **Accessibility** permission (because we simulate `Cmd+V`).
+  - Dev mode: enable Accessibility for `Electron`.
+  - Release build: enable Accessibility for `paste`.
+- Builds are **unsigned / not notarized** for now.
+  - `v0.1.3+` adds a minimal ad-hoc signature to avoid the common “App is damaged” error.
+  - For a polished distribution, add Apple Developer ID signing + notarization.
+
 ## Screenshot
 
 <img width="3560" height="2336" alt="CleanShot 2026-02-12 at 15 31 49@2x" src="https://github.com/user-attachments/assets/30fa4f63-c7d8-454a-a7a2-fb2989e1646d" />
@@ -51,7 +66,7 @@ flowchart LR
   L --> UI["Quick Paste UI"]
   R --> UI
 
-  UI --> Copy["Copy back to clipboard and hide"]
+  UI --> Copy["Copy back to clipboard, hide, and auto-paste"]
 ```
 
 ## Keywords / 关键词
@@ -79,12 +94,20 @@ These are here for discovery (GitHub + search engines):
 - 多设备同步
 - 标签 / 收藏 / 搜索
 - 开源 Paste
+- Open Paste
+- Paste 破解版替代
+- 破解版 Paste 替代
 
 ## Features
 
-- Web/PWA: browse, search, tags, favorites, sync
-- API: `text`/`link`/`html`/`image` (image uses Data URL in D1 for now; about 1_500_000 chars limit; large blobs will move to R2)
-- macOS: Electron tray app; default local-only; retention: 30 days / 6 months / 1 year / forever (favorites are kept)
+- Types: `text` / `link` / `html` / `image`
+- macOS:
+  - Tray app; Quick Paste panel (no main window)
+  - Select a clip to copy, hide, and auto-paste back to your previous app
+  - Local-first retention: `30d` / `180d` / `365d` / `forever` (favorites are kept)
+- Sync (optional): Cloudflare Workers + D1
+  - Search, favorites, tags
+  - Multi-device sync via `clientUpdatedAt` (LWW)
 
 ## Repo Structure
 
@@ -136,6 +159,17 @@ API smoke test:
 npm run test:api:smoke
 ```
 
+## Sync Setup (macOS)
+
+By default `API Base` is empty, so the app is **local-only**.
+
+To enable sync, set `API Base` to one of:
+
+- `https://paste.misonote.com/v1` (same-domain proxy route)
+- `https://pasteapi.misonote.com/v1` (direct Worker domain)
+
+Then keep `User ID` consistent across devices.
+
 ## API (No Auth Phase)
 
 Identity via headers (until auth is added):
@@ -146,7 +180,8 @@ Identity via headers (until auth is added):
 Endpoints:
 
 - `GET /v1/health`
-- `GET /v1/clips` (supports `q`, `tag`, `favorite`, `cursor`, `limit`)
+- `GET /v1/clips` (supports `q`, `tag`, `favorite`, `cursor`, `limit`, `lite=1`)
+- `GET /v1/clips/:id`
 - `POST /v1/clips`
 - `PATCH /v1/clips/:id`
 - `DELETE /v1/clips/:id` (soft delete)
@@ -155,6 +190,11 @@ Endpoints:
 - `DELETE /v1/tags/:id`
 - `GET /v1/sync/pull?since=...&limit=...`
 - `POST /v1/sync/push` (LWW by `clientUpdatedAt`)
+
+Notes:
+
+- `lite=1` makes list responses omit heavy fields (HTML/image) for faster browsing.
+- Images currently use `imageDataUrl` stored in D1 (max ~1_500_000 chars). Larger blobs will move to R2.
 
 Example:
 
@@ -177,6 +217,8 @@ curl -X POST http://127.0.0.1:8787/v1/clips \
 npm run deploy:api
 npm run deploy:web
 ```
+
+For forks: `apps/api/wrangler.toml` includes `misonote.com` routes. Replace them with your own domain/routes (or remove `routes` to use `*.workers.dev`).
 
 ## Docs
 
@@ -208,19 +250,16 @@ Paste is a product name owned by its respective owners. This project is an indep
 
 This repo uses GitHub Releases.
 
-- Tag format: `vX.Y.Z` (example: `v0.1.0`)
+- Tag format: `vX.Y.Z` (example: `v0.1.8`)
 - GitHub Actions will build:
   - macOS Intel (x64): `.dmg` + `.zip`
   - macOS Apple Silicon (arm64): `.dmg` + `.zip`
   - Windows (x64): installer `.exe` + `.zip`
+- Auto-update metadata (for `electron-updater`): `latest*.yml` + `*.blockmap`
 
 Create a release:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag -a v0.1.9 -m "v0.1.9"
+git push origin v0.1.9
 ```
-
-Notes:
-
-- macOS builds are **unsigned** by default. For a polished distribution, add Apple code signing + notarization later.

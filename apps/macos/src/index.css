@@ -3,7 +3,8 @@
   --card-height: 200px;
   --gap: 28px;
   --primary: #007aff;
-  --shelf-bg: rgba(28, 28, 28, 0.75);
+  /* 调高不透明度，从 0.75 -> 0.92，增加实体感 */
+  --shelf-bg: rgba(32, 32, 32, 0.92);
   /* Paste 风格的超大柔和投影 */
   --shadow-lifted: 0 30px 60px rgba(0,0,0,0.45), 0 10px 20px rgba(0,0,0,0.3);
   --shadow-normal: 0 4px 12px rgba(0,0,0,0.2);
@@ -39,12 +40,13 @@ body {
 .history-shelf {
   height: 340px;
   background: var(--shelf-bg);
-  backdrop-filter: blur(60px) saturate(200%) brightness(80%);
-  border-top: 0.5px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(60px) saturate(200%) brightness(100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
   display: flex;
   flex-direction: column;
   padding-top: 30px;
   position: relative;
+  box-shadow: 0 -15px 50px rgba(0,0,0,0.5);
   /* 模拟 macOS 原生弹簧动画 */
   animation: springUp 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.1);
 }
@@ -67,15 +69,15 @@ body {
 
 .search-input {
   width: 420px;
-  background: rgba(45, 45, 45, 0.85);
+  background: rgba(30, 30, 30, 0.98);
   backdrop-filter: blur(30px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 14px;
   padding: 14px 20px 14px 46px;
   color: white;
   font-size: 16px;
   font-weight: 500;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
   outline: none;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
