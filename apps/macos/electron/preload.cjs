@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("macos", {
   setConfig: (next) => ipcRenderer.invoke("config:set", next),
 
   listClips: (query) => ipcRenderer.invoke("clips:list", query),
+  getClip: (id) => ipcRenderer.invoke("clips:get", id),
   createClip: (payload) => ipcRenderer.invoke("clips:create", payload),
   toggleFavorite: (id, isFavorite) => ipcRenderer.invoke("clips:favorite", id, isFavorite),
   deleteClip: (id) => ipcRenderer.invoke("clips:delete", id),

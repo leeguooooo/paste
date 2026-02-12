@@ -54,5 +54,12 @@
     "perMachine": false,
     "allowToChangeInstallationDirectory": true
   },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "leeguooooo",
+      "repo": "paste"
+    }
+  ],
   "afterPack": "electron/afterPack.cjs"
 }

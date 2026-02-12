@@ -20,6 +20,7 @@
     - `includeDeleted=1` 包含软删除
     - `cursor` 分页游标
     - `limit` 默认 50，最大 200
+    - `lite=1` 轻量模式（列表不返回大字段 `contentHtml`/`imageDataUrl`，需要时用 `GET /v1/clips/:id` 取详情）
 - `POST /v1/clips`
   - Body:
     - `id?: string`
@@ -35,6 +36,8 @@
     - `clientUpdatedAt?: number`
 - `PATCH /v1/clips/:id`
   - Body: 同 `POST /v1/clips`（可部分更新）
+- `GET /v1/clips/:id`
+  - Response: `ClipItem`（包含 `contentHtml`/`imageDataUrl` 等详情字段）
 - `DELETE /v1/clips/:id`
   - Body(可选):
     - `clientUpdatedAt?: number`
@@ -53,6 +56,7 @@
   - Query:
     - `since` 默认 `0`
     - `limit` 默认 100，最大 300
+    - `lite=1` 轻量模式（同上，不返回 `contentHtml`/`imageDataUrl`）
   - Response:
     - `changes: ClipItem[]`
     - `nextSince: number`

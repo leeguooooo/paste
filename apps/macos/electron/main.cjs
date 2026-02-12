@@ -1,17 +1,20 @@
-const { randomUUID } = require("node:crypto");
+const { randomUUID, createHash } = require("node:crypto");
 const {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   globalShortcut,
   Tray,
   Menu,
   nativeImage,
   ipcMain,
-  screen
+  screen,
+  shell
 } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const { autoUpdater } = require("electron-updater");
 
 const isDev = !app.isPackaged;
 const devUrl = "http://127.0.0.1:5174";
@@ -26,7 +29,29 @@ let mainWindow = null;
 let tray = null;
 let clipboardTimer = null;
 let lastClipboardFingerprint = "";
+let lastClipboardProbeFingerprint = "";
+let lastClipboardFailure = { fingerprint: "", at: 0 };
 let registeredHotkey = null;
+
+const RELEASES_LATEST_URL = "https://github.com/leeguooooo/paste/releases/latest";
+
+const updateState = {
+  checking: false,
+  available: false,
+  downloaded: false,
+  progressPercent: null,
+  version: null,
+  error: null
+};
+
+const setUpdateState = (next) => {
+  Object.assign(updateState, next || {});
+  try {
+    updateTrayMenu();
+  } catch {
+    // ignore
+  }
+};
 
 const broadcastToWindows = (channel, payload) => {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -132,10 +157,10 @@ const localListClips = (cfg, query = {}) => {
   const q = (query.q || "").toString().trim().toLowerCase();
   const favoriteOnly = Boolean(query.favorite);
 
-  const cleaned = cleanupLocalDb(cfg, readLocalDb());
-  writeLocalDb(cleaned);
-
-  let items = cleaned.clips;
+  // Cleanup happens at startup and on writes. Avoid sorting/filtering + fs writes on
+  // every list call (this is hit frequently while the window is visible).
+  const db = readLocalDb();
+  let items = Array.isArray(db?.clips) ? db.clips : [];
   if (favoriteOnly) items = items.filter((c) => c?.isFavorite);
 
   if (q) {
@@ -378,6 +403,47 @@ const payloadFingerprint = (payload) =>
     payload.imageDataUrl ? `image:${payload.imageDataUrl.length}` : ""
   ].join("|");
 
+const hashPrefix = (buf) => {
+  try {
+    if (!buf || buf.length === 0) return "";
+    const head = buf.subarray(0, Math.min(4096, buf.length));
+    return createHash("sha1").update(head).digest("hex");
+  } catch {
+    return "";
+  }
+};
+
+// Cheap fingerprint to skip expensive image encode when clipboard hasn't changed.
+// Uses raw clipboard buffers when available (no base64/DataURL conversion).
+const probeClipboardFingerprint = () => {
+  const text = clipboard.readText().trim();
+  const html = clipboard.readHTML().trim();
+  const formats = clipboard.availableFormats() || [];
+
+  let imageKey = "";
+  const preferredImageFormat =
+    (formats.includes("image/png") && "image/png") ||
+    (formats.includes("public.png") && "public.png") ||
+    (formats.includes("public.tiff") && "public.tiff") ||
+    formats.find((f) => typeof f === "string" && f.startsWith("image/")) ||
+    null;
+
+  if (preferredImageFormat) {
+    try {
+      const buf = clipboard.readBuffer(preferredImageFormat);
+      imageKey = buf && buf.length ? `${preferredImageFormat}:${buf.length}:${hashPrefix(buf)}` : `${preferredImageFormat}:0`;
+    } catch {
+      imageKey = `${preferredImageFormat}:err`;
+    }
+  }
+
+  return [
+    text.slice(0, 160),
+    html.slice(0, 80),
+    imageKey
+  ].join("|");
+};
+
 const remoteRequest = async (cfg, pathname, init = {}) => {
   const base = cfg.apiBase.trim().replace(/\/$/g, "");
   const url = `${base}${pathname}`;
@@ -440,6 +506,20 @@ const createClipFromPayload = async (payload, source = "watcher") => {
 };
 
 const captureClipboardNow = async (source = "manual") => {
+  const probe = source === "manual" ? "" : probeClipboardFingerprint();
+  if (probe && probe === lastClipboardProbeFingerprint) {
+    return { ok: true, captured: false, reason: "duplicated" };
+  }
+  const now = Date.now();
+  if (
+    probe &&
+    lastClipboardFailure.fingerprint === probe &&
+    now - (lastClipboardFailure.at || 0) < 30_000 &&
+    source !== "manual"
+  ) {
+    return { ok: true, captured: false, reason: "retry-backoff" };
+  }
+
   const built = buildClipboardPayload();
   if (!built.ok || !built.captured) {
     return built;
@@ -447,13 +527,19 @@ const captureClipboardNow = async (source = "manual") => {
 
   const fingerprint = payloadFingerprint(built.payload);
   if (fingerprint === lastClipboardFingerprint && source !== "manual") {
+    if (probe) lastClipboardProbeFingerprint = probe;
     return { ok: true, captured: false, reason: "duplicated" };
   }
 
-const result = await createClipFromPayload(built.payload, source);
+  const result = await createClipFromPayload(built.payload, source);
   if (result.ok && result.captured) {
     lastClipboardFingerprint = fingerprint;
+    if (probe) lastClipboardProbeFingerprint = probe;
+    lastClipboardFailure = { fingerprint: "", at: 0 };
     broadcastToWindows("clips:changed", { source, at: Date.now() });
+  } else if (probe && source !== "manual") {
+    // Avoid re-encoding the same clipboard payload every tick when network is down.
+    lastClipboardFailure = { fingerprint: probe, at: Date.now() };
   }
   return result;
 };
@@ -487,6 +573,117 @@ const toggleMainWindow = () => {
   mainWindow.show();
   mainWindow.focus();
   return { visible: true };
+};
+
+const buildTrayTemplate = () => {
+  const versionLabel = `Version ${app.getVersion()}`;
+
+  const updateLabel = updateState.checking
+    ? "Checking for Updates..."
+    : updateState.downloaded
+      ? "Restart and Install Update"
+      : "Check for Updates...";
+
+  const updateEnabled = !isDev && (!updateState.checking);
+
+  const updateClick = async () => {
+    if (isDev) {
+      return;
+    }
+    if (updateState.downloaded) {
+      try {
+        autoUpdater.quitAndInstall();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    try {
+      await autoUpdater.checkForUpdates();
+    } catch (error) {
+      setUpdateState({
+        checking: false,
+        error: error instanceof Error ? error.message : "update check failed"
+      });
+      try {
+        await dialog.showMessageBox(mainWindow || undefined, {
+          type: "error",
+          message: "Update check failed",
+          detail: updateState.error || "",
+          buttons: ["OK", "Open Releases Page"],
+          defaultId: 0,
+          cancelId: 0
+        }).then(async (res) => {
+          if (res.response === 1) {
+            await shell.openExternal(RELEASES_LATEST_URL);
+          }
+        });
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const items = [
+    { label: "Show / Hide", click: () => toggleMainWindow() },
+    { type: "separator" },
+    {
+      label: "Capture Clipboard Now",
+      click: async () => {
+        await captureClipboardNow("menu");
+      }
+    },
+    { type: "separator" },
+    {
+      label: updateLabel,
+      enabled: updateEnabled,
+      click: () => {
+        void updateClick();
+      }
+    },
+    {
+      label: "Open Releases Page",
+      enabled: true,
+      click: () => {
+        void shell.openExternal(RELEASES_LATEST_URL);
+      }
+    },
+    { label: versionLabel, enabled: false },
+    ...(updateState.available && !updateState.downloaded
+      ? [
+          {
+            label:
+              updateState.progressPercent == null
+                ? `Update Available${updateState.version ? ` (${updateState.version})` : ""}`
+                : `Downloading Update... ${Math.max(0, Math.min(100, Math.round(updateState.progressPercent)))}%`,
+            enabled: false
+          }
+        ]
+      : []),
+    ...(updateState.downloaded
+      ? [{ label: `Update Ready${updateState.version ? ` (${updateState.version})` : ""}`, enabled: false }]
+      : []),
+    ...(updateState.error
+      ? [{ label: `Update Error: ${updateState.error}`, enabled: false }]
+      : []),
+    { type: "separator" },
+    {
+      label: "Quit",
+      click: () => {
+        app.isQuiting = true;
+        app.quit();
+      }
+    }
+  ];
+
+  return items;
+};
+
+const updateTrayMenu = () => {
+  if (!tray) return;
+  const contextMenu = Menu.buildFromTemplate(buildTrayTemplate());
+  tray.setContextMenu(contextMenu);
 };
 
 const createMainWindow = async () => {
@@ -556,27 +753,107 @@ const createTray = () => {
   tray = new Tray(icon);
   tray.setToolTip("paste");
 
-  const contextMenu = Menu.buildFromTemplate([
-    { label: "Show / Hide", click: () => toggleMainWindow() },
-    { type: "separator" },
-    {
-      label: "Capture Clipboard Now",
-      click: async () => {
-        await captureClipboardNow("menu");
-      }
-    },
-    { type: "separator" },
-    {
-      label: "Quit",
-      click: () => {
-        app.isQuiting = true;
-        app.quit();
-      }
-    }
-  ]);
-
-  tray.setContextMenu(contextMenu);
+  updateTrayMenu();
   tray.on("click", () => toggleMainWindow());
+};
+
+const setupAutoUpdate = () => {
+  if (isDev) return;
+
+  // Keep behavior conservative: download automatically, but only install on explicit restart
+  // (or when quitting the app).
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("checking-for-update", () => {
+    setUpdateState({
+      checking: true,
+      available: false,
+      downloaded: false,
+      progressPercent: null,
+      version: null,
+      error: null
+    });
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    setUpdateState({
+      checking: false,
+      available: true,
+      downloaded: false,
+      progressPercent: null,
+      version: info?.version || null,
+      error: null
+    });
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    setUpdateState({
+      checking: false,
+      available: false,
+      downloaded: false,
+      progressPercent: null,
+      version: null,
+      error: null
+    });
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    const pct = typeof progress?.percent === "number" ? progress.percent : null;
+    setUpdateState({
+      checking: false,
+      available: true,
+      downloaded: false,
+      progressPercent: pct,
+      error: null
+    });
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    setUpdateState({
+      checking: false,
+      available: true,
+      downloaded: true,
+      progressPercent: 100,
+      version: info?.version || updateState.version || null,
+      error: null
+    });
+
+    // Prompt once when the update is ready.
+    void (async () => {
+      try {
+        const res = await dialog.showMessageBox(mainWindow || undefined, {
+          type: "info",
+          message: "Update downloaded",
+          detail: "Restart paste to install the update.",
+          buttons: ["Later", "Restart Now"],
+          defaultId: 1,
+          cancelId: 0
+        });
+        if (res.response === 1) {
+          autoUpdater.quitAndInstall();
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  });
+
+  autoUpdater.on("error", (error) => {
+    setUpdateState({
+      checking: false,
+      error: error instanceof Error ? error.message : "auto update error"
+    });
+  });
+
+  // Check shortly after startup; GitHub API can be slow on first request.
+  setTimeout(() => {
+    try {
+      void autoUpdater.checkForUpdates();
+    } catch {
+      // ignore
+    }
+  }, 4000);
 };
 
 const registerGlobalShortcut = (hotkey) => {
@@ -666,7 +943,28 @@ const setupIpc = () => {
     if (query.q) params.set("q", query.q);
     if (query.favorite) params.set("favorite", "1");
     params.set("limit", "60");
+    params.set("lite", "1");
     return remoteRequest(cfg, `/clips?${params.toString()}`);
+  });
+
+  ipcMain.handle("clips:get", async (_, id) => {
+    const cfg = readConfig();
+    const clipId = (id ?? "").toString().trim();
+    if (!clipId) {
+      return { ok: false, code: "INVALID_ID", message: "id is required" };
+    }
+
+    if (!isRemoteEnabled(cfg)) {
+      const db = readLocalDb();
+      const items = Array.isArray(db?.clips) ? db.clips : [];
+      const found = items.find((c) => c?.id === clipId) || null;
+      if (!found) {
+        return { ok: false, code: "NOT_FOUND", message: "clip not found" };
+      }
+      return localOk(found);
+    }
+
+    return remoteRequest(cfg, `/clips/${encodeURIComponent(clipId)}`);
   });
 
   ipcMain.handle("clips:create", async (_, payload) => {
@@ -757,6 +1055,11 @@ const setupIpc = () => {
         html ? html.slice(0, 80) : "",
         imageDataUrl ? `img:${imageDataUrl.length}` : ""
       ].join("|");
+      lastClipboardProbeFingerprint = [
+        text.slice(0, 160),
+        html ? html.slice(0, 80) : "",
+        imageDataUrl ? `img:${imageDataUrl.length}` : ""
+      ].join("|");
 
       return { ok: true };
     } catch (error) {
@@ -797,6 +1100,7 @@ app.on("ready", async () => {
 
   await createMainWindow();
   createTray();
+  setupAutoUpdate();
   registerGlobalShortcut();
   startClipboardWatcher();
 });

@@ -274,17 +274,19 @@ const validateRichFields = (incoming: {
   return null;
 };
 
-const recentClipsCacheKey = (userId: string): string => `clips:recent:${userId}`;
+const recentClipsCacheKey = (userId: string, lite: boolean): string =>
+  lite ? `clips:recent:lite:${userId}` : `clips:recent:${userId}`;
 
 const readRecentClipsCache = async (
   cache: KVNamespace | undefined,
-  userId: string
+  userId: string,
+  lite: boolean
 ): Promise<{ items: ClipRecord[]; nextCursor: string | null; hasMore: boolean } | null> => {
   if (!cache) {
     return null;
   }
   try {
-    const raw = await cache.get(recentClipsCacheKey(userId));
+    const raw = await cache.get(recentClipsCacheKey(userId, lite));
     if (!raw) {
       return null;
     }
@@ -305,13 +307,14 @@ const readRecentClipsCache = async (
 const writeRecentClipsCache = async (
   cache: KVNamespace | undefined,
   userId: string,
+  lite: boolean,
   payload: { items: ClipRecord[]; nextCursor: string | null; hasMore: boolean }
 ): Promise<void> => {
   if (!cache) {
     return;
   }
   try {
-    await cache.put(recentClipsCacheKey(userId), JSON.stringify(payload), {
+    await cache.put(recentClipsCacheKey(userId, lite), JSON.stringify(payload), {
       expirationTtl: RECENT_CLIPS_CACHE_TTL_SECONDS
     });
   } catch {
@@ -327,7 +330,8 @@ const invalidateRecentClipsCache = async (
     return;
   }
   try {
-    await cache.delete(recentClipsCacheKey(userId));
+    await cache.delete(recentClipsCacheKey(userId, false));
+    await cache.delete(recentClipsCacheKey(userId, true));
   } catch {
     // Ignore cache invalidation failures; cache uses short TTL.
   }
@@ -410,53 +414,67 @@ const ensureTagIds = async (
   names: string[],
   now: number
 ): Promise<string[]> => {
-  const ids: string[] = [];
-  const normalizedNames = Array.from(
-    new Set(
-      names
-        .map(normalizeTagName)
-        .filter(Boolean)
-        .slice(0, 20)
-    )
-  );
+  const pairs: { name: string; key: string; id: string }[] = [];
 
-  for (const name of normalizedNames) {
+  // Normalize and de-dupe while keeping display name.
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const name = normalizeTagName(raw);
+    if (!name) continue;
     const key = normalizeTagKey(name);
-    const existing = await db
-      .prepare(
-        `SELECT id
-         FROM tags
-         WHERE user_id = ?1 AND normalized_name = ?2
-         LIMIT 1`
-      )
-      .bind(userId, key)
-      .first<{ id: string }>();
-
-    if (existing?.id) {
-      await db
-        .prepare(
-          `UPDATE tags
-           SET name = ?3, is_deleted = 0, updated_at = ?4
-           WHERE user_id = ?1 AND normalized_name = ?2`
-        )
-        .bind(userId, key, name, now)
-        .run();
-      ids.push(existing.id);
-      continue;
-    }
-
-    const id = crypto.randomUUID();
-    await db
-      .prepare(
-        `INSERT INTO tags (id, user_id, name, normalized_name, is_deleted, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)`
-      )
-      .bind(id, userId, name, key, now)
-      .run();
-    ids.push(id);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ name, key, id: crypto.randomUUID() });
+    if (pairs.length >= 20) break;
   }
 
-  return ids;
+  if (pairs.length === 0) {
+    return [];
+  }
+
+  // Upsert all tags in one statement, then fetch ids in one query.
+  const valuesPlaceholders = pairs.map((_, i) => {
+    const base = i * 7;
+    return `(?${base + 1}, ?${base + 2}, ?${base + 3}, ?${base + 4}, ?${base + 5}, ?${base + 6}, ?${base + 7})`;
+  });
+  const insertSql = `
+    INSERT INTO tags (id, user_id, name, normalized_name, is_deleted, created_at, updated_at)
+    VALUES ${valuesPlaceholders.join(", ")}
+    ON CONFLICT(user_id, normalized_name) DO UPDATE SET
+      name = excluded.name,
+      is_deleted = 0,
+      updated_at = excluded.updated_at
+  `;
+
+  const insertBinds: (string | number)[] = [];
+  for (const pair of pairs) {
+    insertBinds.push(pair.id, userId, pair.name, pair.key, 0, now, now);
+  }
+
+  await db.prepare(insertSql).bind(...insertBinds).run();
+
+  const inPlaceholders = pairs.map((_, i) => `?${i + 2}`).join(", ");
+  const rows = await db
+    .prepare(
+      `SELECT id, normalized_name
+       FROM tags
+       WHERE user_id = ?1 AND normalized_name IN (${inPlaceholders})`
+    )
+    .bind(userId, ...pairs.map((p) => p.key))
+    .all<{ id: string; normalized_name: string }>();
+
+  const idByKey = new Map<string, string>();
+  for (const row of rows.results ?? []) {
+    idByKey.set(row.normalized_name, row.id);
+  }
+
+  for (const pair of pairs) {
+    if (!idByKey.has(pair.key)) {
+      throw new Error(`Tag upsert failed for normalized_name=${pair.key}`);
+    }
+  }
+
+  return pairs.map((p) => idByKey.get(p.key) ?? p.id);
 };
 
 const replaceClipTags = async (
@@ -476,15 +494,26 @@ const replaceClipTags = async (
     .run();
 
   const tagIds = await ensureTagIds(db, userId, tagNames, now);
-  for (const tagId of tagIds) {
-    await db
-      .prepare(
-        `INSERT INTO clip_tags (user_id, clip_id, tag_id, created_at)
-         VALUES (?1, ?2, ?3, ?4)`
-      )
-      .bind(userId, clipId, tagId, now)
-      .run();
+  if (tagIds.length === 0) {
+    return;
   }
+
+  const placeholders = tagIds.map((_, i) => {
+    const base = i * 4;
+    return `(?${base + 1}, ?${base + 2}, ?${base + 3}, ?${base + 4})`;
+  });
+  const binds: (string | number)[] = [];
+  for (const tagId of tagIds) {
+    binds.push(userId, clipId, tagId, now);
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO clip_tags (user_id, clip_id, tag_id, created_at)
+       VALUES ${placeholders.join(", ")}`
+    )
+    .bind(...binds)
+    .run();
 };
 
 const fetchClipWithTags = async (
@@ -622,6 +651,7 @@ const handleListClips = async (
   cache?: KVNamespace
 ): Promise<Response> => {
   const url = new URL(request.url);
+  const lite = url.searchParams.get("lite") === "1";
   const q = url.searchParams.get("q")?.trim().toLowerCase() || "";
   const tag = normalizeTagKey(url.searchParams.get("tag") || "");
   const favoriteOnly = url.searchParams.get("favorite") === "1";
@@ -636,7 +666,7 @@ const handleListClips = async (
   }
 
   if (isDefaultRecentQuery) {
-    const cached = await readRecentClipsCache(cache, identity.userId);
+    const cached = await readRecentClipsCache(cache, identity.userId, lite);
     if (cached) {
       return ok(cached);
     }
@@ -689,10 +719,22 @@ const handleListClips = async (
     bindIndex += 2;
   }
 
+  const selectFields = lite
+    ? `
+      c.id, c.user_id, c.device_id, c.type, c.summary, c.content,
+      NULL AS content_html, c.source_url, NULL AS image_data_url,
+      c.is_favorite, c.is_deleted,
+      c.client_updated_at, c.server_updated_at, c.created_at
+    `
+    : `
+      c.id, c.user_id, c.device_id, c.type, c.summary, c.content,
+      c.content_html, c.source_url, c.image_data_url,
+      c.is_favorite, c.is_deleted,
+      c.client_updated_at, c.server_updated_at, c.created_at
+    `;
+
   const sql = `
-    SELECT c.id, c.user_id, c.device_id, c.type, c.summary, c.content, c.content_html, c.source_url,
-           c.image_data_url, c.is_favorite, c.is_deleted,
-           c.client_updated_at, c.server_updated_at, c.created_at
+    SELECT ${selectFields}
     FROM clips c
     WHERE ${where.join(" AND ")}
     ORDER BY c.server_updated_at DESC, c.id DESC
@@ -724,10 +766,22 @@ const handleListClips = async (
   };
 
   if (isDefaultRecentQuery) {
-    await writeRecentClipsCache(cache, identity.userId, payload);
+    await writeRecentClipsCache(cache, identity.userId, lite, payload);
   }
 
   return ok(payload);
+};
+
+const handleGetClip = async (
+  db: D1Database,
+  identity: Identity,
+  clipId: string
+): Promise<Response> => {
+  const clip = await fetchClipWithTags(db, identity.userId, clipId);
+  if (!clip) {
+    return fail("NOT_FOUND", "clip not found", 404);
+  }
+  return ok(clip);
 };
 
 const handleCreateClip = async (
@@ -1023,6 +1077,7 @@ const handleSyncPull = async (
   identity: Identity
 ): Promise<Response> => {
   const url = new URL(request.url);
+  const lite = url.searchParams.get("lite") === "1";
   const since = Number(url.searchParams.get("since") ?? 0);
   const limit = parseLimit(url.searchParams.get("limit"), DEFAULT_SYNC_LIMIT, MAX_SYNC_LIMIT);
 
@@ -1030,10 +1085,21 @@ const handleSyncPull = async (
     return fail("INVALID_SINCE", "since must be a non-negative number", 400);
   }
 
+  const selectFields = lite
+    ? `
+      id, user_id, device_id, type, summary, content,
+      NULL AS content_html, source_url, NULL AS image_data_url,
+      is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
+    `
+    : `
+      id, user_id, device_id, type, summary, content,
+      content_html, source_url, image_data_url,
+      is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
+    `;
+
   const rows = await db
     .prepare(
-      `SELECT id, user_id, device_id, type, summary, content, content_html, source_url, image_data_url,
-              is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
+      `SELECT ${selectFields}
        FROM clips
        WHERE user_id = ?1 AND server_updated_at > ?2
        ORDER BY server_updated_at ASC, id ASC
@@ -1173,6 +1239,13 @@ export default {
 
       if (request.method === "POST" && path === "/v1/clips") {
         return handleCreateClip(request, db, identity, env.CACHE);
+      }
+
+      if (request.method === "GET") {
+        const clipId = getClipIdFromPath(path);
+        if (clipId) {
+          return handleGetClip(db, identity, clipId);
+        }
       }
 
       if (request.method === "PATCH") {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import type { ClipItem } from "@paste/shared";
 import { 
   Search, 
@@ -57,6 +57,16 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const windowVisibleRef = useRef(false);
   const refreshTimerRef = useRef<number | null>(null);
+
+  const previewTextById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const clip of clips) {
+      if (!clip?.id) continue;
+      const text = clip.contentHtml ? htmlToText(clip.contentHtml) : clip.content;
+      map.set(clip.id, (text || "").slice(0, 300));
+    }
+    return map;
+  }, [clips]);
 
   const loadConfig = async () => {
     try {
@@ -140,20 +150,88 @@ export default function App() {
     }
   }, [clips.length, selectedIndex]);
 
+  // Remote list uses lite mode; fetch full clip on-demand for images (preview/copy).
+  useEffect(() => {
+    const clip = clips[selectedIndex];
+    if (!clip) return;
+    if (clip.type !== "image") return;
+    if (clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/")) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await window.macos.getClip(clip.id);
+        if (cancelled) return;
+        if (res?.ok && res.data) {
+          setClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, ...res.data } : c)));
+        }
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clips, selectedIndex]);
+
+  // --- Smart Scroll Synchronization ---
   useEffect(() => {
     if (!scrollContainerRef.current || clips.length === 0) return;
     const container = scrollContainerRef.current;
-    const cardWidth = 280 + 24; 
-    const targetScroll = (selectedIndex * cardWidth); 
-    container.scrollTo({ left: targetScroll, behavior: "smooth" });
-  }, [selectedIndex, clips]);
+    const cardWidth = 280; // --card-width
+    const gap = 28; // --gap
+    const padding = 80; // container padding-left/right
+    
+    const containerWidth = container.clientWidth;
+    const scrollLeft = container.scrollLeft;
+    
+    // 当前卡片相对于容器左侧的绝对位置
+    const cardLeftPos = padding + selectedIndex * (cardWidth + gap);
+    const cardRightPos = cardLeftPos + cardWidth;
+
+    // 可见区域的边界
+    const viewLeft = scrollLeft;
+    const viewRight = scrollLeft + containerWidth;
+
+    // 如果卡片超出了右边界（或者离右边太近了，预留一点边距）
+    if (cardRightPos > viewRight - padding) {
+      container.scrollTo({
+        left: cardRightPos - containerWidth + padding,
+        behavior: "smooth"
+      });
+    } 
+    // 如果卡片超出了左边界
+    else if (cardLeftPos < viewLeft + padding) {
+      container.scrollTo({
+        left: cardLeftPos - padding,
+        behavior: "smooth"
+      });
+    }
+  }, [selectedIndex, clips.length]);
 
   const handleCopy = async (clip: ClipItem) => {
-    const text = clip.content || clip.sourceUrl || "";
+    let effective = clip;
+    if (
+      clip.type === "image" &&
+      (!clip.imageDataUrl || !String(clip.imageDataUrl).startsWith("data:image/"))
+    ) {
+      try {
+        const res = await window.macos.getClip(clip.id);
+        if (res?.ok && res.data) {
+          effective = res.data;
+          setClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, ...res.data } : c)));
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const text = effective.content || effective.sourceUrl || "";
     await window.macos.writeClipboard({
       text,
-      html: clip.contentHtml ?? null,
-      imageDataUrl: clip.imageDataUrl ?? null
+      html: effective.contentHtml ?? null,
+      imageDataUrl: effective.imageDataUrl ?? null
     });
     await window.macos.toggleWindow();
   };
@@ -245,8 +323,7 @@ export default function App() {
     if (dataUrl) {
       return <img src={dataUrl} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />;
     }
-    const text = clip.contentHtml ? htmlToText(clip.contentHtml) : clip.content;
-    return <div className="preview-text">{(text || "").slice(0, 300)}</div>;
+    return <div className="preview-text">{previewTextById.get(clip.id) ?? ""}</div>;
   };
 
   const saveConfig = async () => {
@@ -259,7 +336,7 @@ export default function App() {
 
   return (
     <main 
-      className="app-shell" 
+      className={`app-shell ${clips.length > 0 ? 'active' : ''}`} 
       onClick={async (e) => {
         if (e.target === e.currentTarget) {
           await window.macos.toggleWindow();
@@ -271,19 +348,25 @@ export default function App() {
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ position: 'relative' }}>
               <Search 
-                size={18} 
-                style={{ position: 'absolute', left: 14, top: 12, color: 'rgba(255,255,255,0.4)' }} 
+                size={20} 
+                style={{ position: 'absolute', left: 16, top: 14, color: 'rgba(255,255,255,0.3)' }} 
               />
               <input
                 ref={searchInputRef}
                 className="search-input"
-                placeholder="Type to search..."
+                placeholder="Type to search history..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
+                autoFocus
               />
             </div>
-            <button className="icon-btn" onClick={() => setShowSettings(true)} title="Settings (Cmd+,)">
+            <button 
+              className="icon-btn" 
+              onClick={() => setShowSettings(true)}
+              style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
+              title="Settings (Cmd+,)"
+            >
               <Settings size={22} />
             </button>
           </div>
@@ -297,6 +380,7 @@ export default function App() {
                 key={clip.id} 
                 className={`clip-card ${isSelected ? 'selected' : ''}`}
                 data-type={clip.type}
+                onMouseEnter={() => setSelectedIndex((prev) => (prev === index ? prev : index))}
                 onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
               >
                 <div className="clip-preview">
@@ -304,11 +388,11 @@ export default function App() {
                 </div>
                 
                 <div className="clip-footer">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {getIcon(clip.type)}
-                    <span>{clip.type}</span>
+                    <span style={{ textTransform: 'uppercase' }}>{clip.type}</span>
                   </div>
-                  <span>{new Date(clip.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                  {isSelected && <span className="shortcut-hint">ENTER</span>}
                 </div>
               </div>
             );

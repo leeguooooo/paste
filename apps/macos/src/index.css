@@ -1,10 +1,12 @@
 :root {
   --card-width: 280px;
   --card-height: 200px;
-  --gap: 24px;
+  --gap: 28px;
   --primary: #007aff;
-  --text: #ffffff;
-  --shelf-bg: rgba(20, 20, 20, 0.75);
+  --shelf-bg: rgba(28, 28, 28, 0.75);
+  /* Paste 风格的超大柔和投影 */
+  --shadow-lifted: 0 30px 60px rgba(0,0,0,0.45), 0 10px 20px rgba(0,0,0,0.3);
+  --shadow-normal: 0 4px 12px rgba(0,0,0,0.2);
 }
 
 * { box-sizing: border-box; }
@@ -15,7 +17,7 @@ body {
   overflow: hidden;
   background: transparent !important;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  -webkit-font-smoothing: antialiased;
+  user-select: none;
 }
 
 .app-shell {
@@ -23,33 +25,39 @@ body {
   width: 100vw;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end; /* 所有的交互沉到底部 */
-  background: rgba(0, 0, 0, 0.05); /* 极低透明度，仅保留轻微深度感 */
+  justify-content: flex-end;
+  background: rgba(0, 0, 0, 0.02); /* 极简背景，确保透明 */
+  transition: background 0.3s ease;
 }
 
-/* 底部托盘区域 - 约占 1/3 到 1/4 */
+/* 激活时背景轻微调暗，产生聚焦感 */
+.app-shell.active {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* 底部托盘：增加弹簧感动画 */
 .history-shelf {
-  height: 320px;
+  height: 340px;
   background: var(--shelf-bg);
-  backdrop-filter: blur(50px) saturate(180%);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(60px) saturate(200%) brightness(80%);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.15);
   display: flex;
   flex-direction: column;
-  padding-top: 20px;
+  padding-top: 30px;
   position: relative;
-  box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
-  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  /* 模拟 macOS 原生弹簧动画 */
+  animation: springUp 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.1);
 }
 
-@keyframes slideUp {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+@keyframes springUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
 
-/* 搜索框：悬浮在托盘上方 */
+/* 搜索框：更精致的半透明效果 */
 .toolbar {
   position: absolute;
-  top: -60px; /* 悬浮在托盘之上 */
+  top: -65px;
   left: 0;
   right: 0;
   display: flex;
@@ -58,26 +66,33 @@ body {
 }
 
 .search-input {
-  width: 400px;
-  background: rgba(40, 40, 40, 0.8);
-  backdrop-filter: blur(20px);
+  width: 420px;
+  background: rgba(45, 45, 45, 0.85);
+  backdrop-filter: blur(30px);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 12px 20px;
-  padding-left: 42px;
+  border-radius: 14px;
+  padding: 14px 20px 14px 46px;
   color: white;
-  font-size: 15px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  font-size: 16px;
+  font-weight: 500;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.3);
   outline: none;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* 滚动区域 */
+.search-input:focus {
+  width: 480px;
+  background: rgba(55, 55, 55, 0.95);
+  border-color: var(--primary);
+}
+
+/* 滚动带：隐藏滚动条但保留物理感 */
 .history-container {
   flex: 1;
   display: flex;
   align-items: center;
   gap: var(--gap);
-  padding: 0 60px 20px 60px;
+  padding: 0 80px 30px 80px;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
@@ -86,55 +101,99 @@ body {
 
 .history-container::-webkit-scrollbar { display: none; }
 
+/* 卡片重构：高度模拟 Paste */
 .clip-card {
   flex: 0 0 var(--card-width);
   height: var(--card-height);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 20px;
   scroll-snap-align: center;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+}
+
+/* 色带指示器 */
+.clip-card::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  opacity: 0.8;
+}
+.clip-card[data-type="text"]::after { background: #007aff; }
+.clip-card[data-type="link"]::after { background: #34c759; }
+.clip-card[data-type="image"]::after { background: #af52de; }
+.clip-card[data-type="code"]::after { background: #ff9500; }
+
+.clip-card:hover {
+  transform: translateY(-6px) scale(1.04);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
 }
 
 .clip-card.selected {
-  transform: scale(1.05) translateY(-5px);
+  transform: scale(1.08) translateY(-12px);
   background: rgba(255, 255, 255, 0.15);
   border: 2px solid var(--primary);
-  box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+  box-shadow: var(--shadow-lifted);
+  z-index: 10;
 }
 
 .clip-preview {
   flex: 1;
-  padding: 16px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: white;
+  padding: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.95);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   overflow: hidden;
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+.preview-text {
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
 }
 
 .clip-footer {
-  height: 32px;
-  padding: 0 12px;
-  background: rgba(0,0,0,0.3);
+  height: 38px;
+  padding: 0 16px;
+  background: rgba(0,0,0,0.25);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 10px;
-  color: rgba(255,255,255,0.5);
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* 提示图标 */
+.shortcut-hint {
+  background: rgba(255,255,255,0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: rgba(255,255,255,0.6);
 }
 
 /* --- Settings & Preferences --- */
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(25px);
   z-index: 500;
   display: flex;
@@ -144,71 +203,68 @@ body {
 }
 
 .settings-panel {
-  width: 420px;
-  background: rgba(30, 30, 30, 0.95);
+  width: 440px;
+  background: rgba(45, 45, 45, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 24px;
   padding: 32px;
   color: white;
-  box-shadow: 0 30px 60px rgba(0,0,0,0.5);
+  box-shadow: 0 40px 100px rgba(0,0,0,0.6);
   animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes scaleUp {
-  from { transform: scale(0.9); opacity: 0; }
+  from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
 }
 
 .settings-panel h2 {
-  margin: 0 0 24px 0;
-  font-size: 20px;
+  margin: 0 0 28px 0;
+  font-size: 18px;
   font-weight: 700;
   text-align: center;
 }
 
 .settings-section {
-  margin-bottom: 24px;
-  background: rgba(255, 255, 255, 0.05);
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .settings-section-title {
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: rgba(255, 255, 255, 0.4);
-  margin-bottom: 12px;
-  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.35);
+  margin-bottom: 14px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
 }
 
 .settings-row {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.settings-row:last-child {
-  margin-bottom: 0;
+  gap: 6px;
+  margin-bottom: 14px;
 }
 
 .settings-row label {
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .settings-row input[type="text"] {
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 8px 12px;
+  border-radius: 10px;
+  padding: 10px 14px;
   color: white;
-  font-size: 14px;
+  font-size: 13px;
   outline: none;
-  transition: border-color 0.2s;
 }
 
 .settings-row input[type="text"]:focus {
@@ -218,53 +274,37 @@ body {
 .checkbox-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   cursor: pointer;
-  font-size: 14px;
-  padding: 4px 0;
-}
-
-.checkbox-row input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--primary);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .settings-actions {
   display: flex;
   gap: 12px;
-  margin-top: 8px;
 }
 
 .btn-save {
-  flex: 1;
+  flex: 1.5;
   background: var(--primary);
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px;
   color: white;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn-save:hover {
-  opacity: 0.9;
 }
 
 .btn-cancel {
   flex: 1;
   background: rgba(255, 255, 255, 0.1);
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px;
   color: white;
   font-weight: 600;
   cursor: pointer;
-}
-
-.btn-cancel:hover {
-  background: rgba(255, 255, 255, 0.15);
 }
 
 /* --- Utilities --- */
@@ -276,70 +316,9 @@ body {
   padding: 6px;
   border-radius: 8px;
   transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .icon-btn:hover {
   color: white;
   background: rgba(255, 255, 255, 0.1);
-}
-.preview-text {
-  width: 100%;
-  height: 100%;
-  display: -webkit-box;
-  -webkit-line-clamp: 7;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.clip-preview.is-image {
-  padding: 10px;
-}
-
-.clip-image-preview {
-  width: 100%;
-  height: 100%;
-  display: block;
-  border-radius: 12px;
-  object-fit: contain;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.clip-image-missing {
-  width: 100%;
-  height: 100%;
-  border-radius: 12px;
-  border: 1px dashed rgba(255, 255, 255, 0.25);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.settings-button {
-  position: absolute;
-  right: 18px;
-  top: -54px;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(40, 40, 40, 0.8);
-  color: rgba(255, 255, 255, 0.75);
-  cursor: pointer;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-}
-
-.settings-button:hover {
-  color: rgba(255, 255, 255, 0.95);
-  border-color: rgba(255, 255, 255, 0.22);
 }

@@ -22,6 +22,7 @@ declare global {
         hotkey: string;
       }) => Promise<{ ok: boolean; message?: string }>;
       listClips: (query?: { q?: string; favorite?: boolean }) => Promise<any>;
+      getClip: (id: string) => Promise<any>;
       createClip: (payload: {
         content: string;
         summary?: string;

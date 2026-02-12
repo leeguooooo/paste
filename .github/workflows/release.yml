@@ -26,12 +26,29 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm --workspace @paste/macos run dist -- --mac dmg zip --${{ matrix.arch }}
+      - name: Normalize macOS update metadata filenames
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/macos/dist-electron
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            if [[ -f latest-mac.yml && ! -f latest-mac-arm64.yml ]]; then
+              mv latest-mac.yml latest-mac-arm64.yml
+            fi
+          fi
+          if [[ "${{ matrix.arch }}" == "x64" ]]; then
+            if [[ -f latest-mac-x64.yml && ! -f latest-mac.yml ]]; then
+              mv latest-mac-x64.yml latest-mac.yml
+            fi
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
           path: |
             apps/macos/dist-electron/*.dmg
             apps/macos/dist-electron/*.zip
+            apps/macos/dist-electron/*.blockmap
+            apps/macos/dist-electron/latest*.yml
 
   windows:
     runs-on: windows-latest
@@ -52,6 +69,8 @@ jobs:
           path: |
             apps/macos/dist-electron/*.exe
             apps/macos/dist-electron/*.zip
+            apps/macos/dist-electron/*.blockmap
+            apps/macos/dist-electron/latest*.yml
 
   release:
     runs-on: ubuntu-latest

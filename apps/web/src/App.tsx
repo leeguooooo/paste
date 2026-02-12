@@ -26,6 +26,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -42,6 +43,7 @@ export default function App() {
       const params = new URLSearchParams();
       if (query) params.append("q", query);
       params.append("limit", "50");
+      params.append("lite", "1");
 
       const res = await fetch(`${API_BASE}/clips?${params.toString()}`, {
         headers: fetchHeaders
@@ -54,6 +56,19 @@ export default function App() {
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [query, userId, deviceId]);
+
+  const fetchClipById = useCallback(async (id: string): Promise<ClipItem | null> => {
+    try {
+      const res = await fetch(`${API_BASE}/clips/${encodeURIComponent(id)}`, {
+        headers: fetchHeaders
+      });
+      const data: ApiResponse<ClipItem> = await res.json();
+      return data.ok ? data.data : null;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }, [userId, deviceId]);
 
   useEffect(() => {
     void loadClips(true);
@@ -96,23 +111,30 @@ export default function App() {
 
   const handleCopy = async (clip: ClipItem) => {
     try {
-      if (clip.type === "image" && clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/")) {
+      let effective = clip;
+      if (clip.type === "image" && (!clip.imageDataUrl || !String(clip.imageDataUrl).startsWith("data:image/"))) {
+        const fetched = await fetchClipById(clip.id);
+        if (fetched) {
+          effective = fetched;
+          setClips((prev) => prev.map((c) => (c.id === fetched.id ? { ...c, ...fetched } : c)));
+        }
+      }
+
+      if (effective.type === "image" && effective.imageDataUrl && String(effective.imageDataUrl).startsWith("data:image/")) {
         // Best-effort image copy (may fail due to browser permission model).
-        const blob = await (await fetch(String(clip.imageDataUrl))).blob();
+        const blob = await (await fetch(String(effective.imageDataUrl))).blob();
         const ClipboardItemCtor = (window as any).ClipboardItem as any;
         if (!ClipboardItemCtor) throw new Error("ClipboardItem not supported");
         await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
       } else {
-        await navigator.clipboard.writeText(clip.content);
+        await navigator.clipboard.writeText(effective.content);
       }
     } catch {
       await navigator.clipboard.writeText(clip.content);
     }
 
-    // Visual feedback on the card
-    const originalClips = [...clips];
-    setClips(clips.map((c, i) => i === selectedIndex ? { ...c, summary: "✓ Copied!" } : c));
-    setTimeout(() => setClips(originalClips), 1000);
+    setCopiedId(clip.id);
+    window.setTimeout(() => setCopiedId((prev) => (prev === clip.id ? null : prev)), 900);
   };
 
   const handleToggleFavorite = async (e: React.MouseEvent, clip: ClipItem) => {
@@ -167,6 +189,7 @@ export default function App() {
         <div className="history-container" ref={scrollContainerRef}>
           {clips.map((clip, index) => {
             const isSelected = index === selectedIndex;
+            const isCopied = copiedId === clip.id;
             return (
               <div 
                 key={clip.id} 
@@ -177,7 +200,7 @@ export default function App() {
                   {clip.type === "image" && clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/") ? (
                     <img src={clip.imageDataUrl} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />
                   ) : (
-                    <div className="preview-text">{clip.content}</div>
+                    <div className="preview-text">{isCopied ? "✓ Copied!" : clip.content}</div>
                   )}
                 </div>
                 <div className="clip-footer">
