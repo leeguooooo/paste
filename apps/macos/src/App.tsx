@@ -833,13 +833,13 @@ export default function App() {
               </button>
             </div>
             
-            <div className="settings-section">
-              <div className="settings-section-title">
-                <Globe size={12} style={{marginRight: 6}} /> Connection
-              </div>
-              <div className="settings-row">
-                <label>API Endpoint</label>
-                <input
+	            <div className="settings-section">
+	              <div className="settings-section-title">
+	                <Globe size={12} /> Connection
+	              </div>
+	              <div className="settings-row">
+	                <label>API Endpoint</label>
+	                <input
                   type="text"
                   placeholder="https://api.example.com/v1"
                   value={config.apiBase}
@@ -856,13 +856,13 @@ export default function App() {
               </div>
             </div>
 
-            <div className="settings-section">
-              <div className="settings-section-title">
-                <Cpu size={12} style={{marginRight: 6}} /> System
-              </div>
-              <div className="settings-row">
-                <label>Global Hotkey</label>
-                <input
+	            <div className="settings-section">
+	              <div className="settings-section-title">
+	                <Cpu size={12} /> System
+	              </div>
+	              <div className="settings-row">
+	                <label>Global Hotkey</label>
+	                <input
                   type="text"
                   value={config.hotkey}
                   onChange={e => setConfig({ ...config, hotkey: e.target.value })}
@@ -878,12 +878,12 @@ export default function App() {
               </div>
             </div>
 
-            <div className="settings-section">
-              <div className="settings-section-title">
-                <Monitor size={12} style={{marginRight: 6}} /> Capture
-              </div>
-              <div className="checkbox-row">
-                <input
+	            <div className="settings-section">
+	              <div className="settings-section-title">
+	                <Monitor size={12} /> Capture
+	              </div>
+	              <div className="checkbox-row">
+	                <input
                   type="checkbox"
                   checked={config.autoCapture}
                   onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}

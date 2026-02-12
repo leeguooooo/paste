@@ -61,18 +61,22 @@ export default function App() {
           >
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
               <ProductShot
-                label="macOS app"
-                title="Fast, native clipboard history"
-                description="Search, pin, and sync your clipboard across devices. Built for speed and privacy."
-                src="/product/macos.svg"
-                alt="Paste macOS app screenshot"
-              />
-              <ProductShot
                 label="Web app"
                 title="Your clipboard, anywhere"
                 description="Access and manage your history from the browser. Fully synced with the desktop client."
-                src="/product/web.svg"
+                src="/product/shots/web-live-1920x1080.png"
                 alt="Paste web app screenshot"
+                overlay={{
+                  src: "/product/shots/web-live-iphone14.png",
+                  alt: "Paste web app on iPhone",
+                }}
+              />
+              <ProductShot
+                label="macOS app"
+                title="Fast, native clipboard history"
+                description="Search, pin, and sync your clipboard across devices. Built for speed and privacy."
+                src="/product/shots/macos-readme.png"
+                alt="Paste macOS app screenshot"
               />
             </div>
 
@@ -127,12 +131,14 @@ function ProductShot({
   description,
   src,
   alt,
+  overlay,
 }: {
   label: string;
   title: string;
   description: string;
   src: string;
   alt: string;
+  overlay?: { src: string; alt: string };
 }) {
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl shadow-2xl overflow-hidden">
@@ -141,14 +147,25 @@ function ProductShot({
         <div className="mt-2 text-2xl font-extrabold tracking-tight">{title}</div>
         <div className="mt-2 text-sm text-white/50 leading-relaxed">{description}</div>
       </div>
-      <div className="p-3">
-        <div className="rounded-2xl overflow-hidden border border-white/10 bg-[#0b0b0b]">
-          <img
-            src={src}
-            alt={alt}
-            loading="lazy"
-            className="w-full h-auto block"
-          />
+      <div className="p-4">
+        <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-[#0b0b0b]">
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-[520px] h-[220px] bg-blue-500/20 blur-[70px]" />
+          </div>
+
+          <div className="relative p-3">
+            <div className="rounded-xl overflow-hidden border border-white/10 bg-black">
+              <img src={src} alt={alt} loading="lazy" className="w-full h-auto block" />
+            </div>
+
+            {overlay ? (
+              <div className="absolute right-5 bottom-5 w-[168px] sm:w-[190px] lg:w-[176px]">
+                <div className="rounded-[28px] overflow-hidden border border-white/15 bg-black shadow-[0_22px_70px_rgba(0,0,0,0.75)]">
+                  <img src={overlay.src} alt={overlay.alt} loading="lazy" className="w-full h-auto block" />
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

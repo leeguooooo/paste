@@ -519,7 +519,75 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <div className="history-shelf">
+      <header className="marketing-nav">
+        <a className="brand" href="/" aria-label="Paste home">
+          <span className="brand-mark" aria-hidden="true">P</span>
+          <span className="brand-name">Paste</span>
+        </a>
+        <nav className="marketing-links" aria-label="Primary">
+          <a href="https://github.com/leeguooooo/paste" target="_blank" rel="noopener noreferrer">Source Code</a>
+          <a className="nav-cta" href="https://github.com/leeguooooo/paste/releases/latest" target="_blank" rel="noopener noreferrer">
+            Download for macOS
+          </a>
+        </nav>
+      </header>
+
+      <section className="marketing-hero">
+        <div className="hero-inner">
+          <div className="hero-copy">
+            <div className="hero-eyebrow">Open-source. Local-first. Paste.app alternative.</div>
+            <h1 className="hero-title">
+              The Clipboard,
+              <br />
+              Reimagined.
+            </h1>
+            <p className="hero-subtitle">
+              A high-performance clipboard manager for macOS and Web. Beautiful, private, and free forever.
+            </p>
+
+            <div className="hero-ctas">
+              <a className="btn btn-primary" href="https://github.com/leeguooooo/paste/releases/latest" target="_blank" rel="noopener noreferrer">
+                Download for macOS
+              </a>
+              <a className="btn btn-ghost" href="#demo">
+                Try the web demo
+              </a>
+            </div>
+          </div>
+
+          <div className="hero-visual" aria-hidden="true">
+            <div className="device-stack">
+              <div className="device-browser">
+                <div className="device-browser-top">
+                  <span className="dot dot-red" />
+                  <span className="dot dot-yellow" />
+                  <span className="dot dot-green" />
+                  <span className="device-browser-title">paste-web.misonote.com</span>
+                </div>
+                <img
+                  src="/product/shots/web-live-1920x1080.png"
+                  alt=""
+                  className="device-browser-img"
+                  loading="lazy"
+                  draggable={false}
+                />
+              </div>
+
+              <div className="device-phone">
+                <img
+                  src="/product/shots/web-live-iphone14.png"
+                  alt=""
+                  className="device-phone-img"
+                  loading="lazy"
+                  draggable={false}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="history-shelf" id="demo">
         <div className="toolbar">
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ position: 'relative' }}>

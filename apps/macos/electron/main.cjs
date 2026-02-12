@@ -19,7 +19,14 @@ const { execFile, execFileSync } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
 
 const isDev = !app.isPackaged;
-const devUrl = "http://127.0.0.1:5174";
+const parsePort = (raw, fallback) => {
+  const n = Number.parseInt(String(raw ?? ""), 10);
+  if (!Number.isFinite(n)) return fallback;
+  if (n <= 0 || n >= 65536) return fallback;
+  return n;
+};
+const devPort = parsePort(process.env.PASTE_DEV_PORT ?? process.env.VITE_PORT, 5174);
+const devUrl = `http://127.0.0.1:${devPort}`;
 
 const configFile = path.join(app.getPath("userData"), "paste-macos-config.json");
 const localClipsFile = path.join(app.getPath("userData"), "paste-local-clips.json");
@@ -1087,9 +1094,23 @@ const createMainWindow = async () => {
 };
 
 const createTray = () => {
-  const icon = nativeImage.createFromDataURL(
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAOCAQAAAC1QeVaAAAAKklEQVR42mP8z8DAwMgABYwMjAxwMDAwGGAAQzQwMDAA4hSYDKQdA4QAAJw3B8eEzWLWAAAAAElFTkSuQmCC"
-  );
+  const trayAssetPath = path.join(__dirname, "assets", "trayTemplate.png");
+  let loadedFromAsset = false;
+  let icon = null;
+  try {
+    if (fs.existsSync(trayAssetPath)) {
+      icon = nativeImage.createFromPath(trayAssetPath);
+      loadedFromAsset = true;
+    }
+  } catch {
+    // ignore
+  }
+  if (!icon || icon.isEmpty()) {
+    icon = nativeImage.createFromDataURL(
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAOCAQAAAC1QeVaAAAAKklEQVR42mP8z8DAwMgABYwMjAxwMDAwGGAAQzQwMDAA4hSYDKQdA4QAAJw3B8eEzWLWAAAAAElFTkSuQmCC"
+    );
+    loadedFromAsset = false;
+  }
 
   try {
     if (process.platform === "darwin" && icon && !icon.isEmpty()) {
@@ -1103,7 +1124,7 @@ const createTray = () => {
   try {
     // Slightly larger improves visibility in the macOS menu bar.
     if (trayIcon && !trayIcon.isEmpty()) {
-      trayIcon = trayIcon.resize({ width: 18, height: 18, quality: "best" });
+      trayIcon = trayIcon.resize({ width: 22, height: 22, quality: "best" });
     }
   } catch {
     // ignore
@@ -1111,9 +1132,43 @@ const createTray = () => {
 
   tray = new Tray(trayIcon);
   tray.setToolTip("paste");
+  if (process.platform === "darwin") {
+    // If the icon is too subtle or hidden by tinting, a short title guarantees something visible.
+    // (Users can still hide it via menu bar manager apps; this just removes "icon is invisible" as a class of bugs.)
+    tray.setTitle("paste");
+  }
 
   updateTrayMenu();
   tray.on("click", () => void toggleMainWindow());
+  tray.on("right-click", () => {
+    try {
+      tray.popUpContextMenu();
+    } catch {
+      // ignore
+    }
+  });
+
+  const logTray = (tag) => {
+    try {
+      console.log(tag, {
+        bounds: tray?.getBounds?.(),
+        title: tray?.getTitle?.(),
+        tooltip: tray?.getToolTip?.()
+      });
+    } catch (e) {
+      console.log(tag, { error: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  console.log("[tray] created", {
+    platform: process.platform,
+    isDev,
+    devUrl,
+    loadedFromAsset,
+    trayAssetPath
+  });
+  logTray("[tray] initial");
+  setTimeout(() => logTray("[tray] +1s"), 1000);
 };
 
 const setupAutoUpdate = () => {

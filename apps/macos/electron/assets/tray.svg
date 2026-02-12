@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Solid silhouette for macOS menu bar (template image). -->
+  <rect x="18" y="12" width="28" height="8" rx="4" fill="#000"/>
+  <rect x="16" y="18" width="32" height="38" rx="6" fill="#000"/>
+</svg>
