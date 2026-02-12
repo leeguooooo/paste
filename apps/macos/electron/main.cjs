@@ -1070,6 +1070,44 @@ const setupIpc = () => {
     }
   });
 
+  ipcMain.handle("clipboard:paste-and-hide", async (_, value) => {
+    try {
+      // 1. 先执行写入剪贴板逻辑 (调用内部已有的逻辑或重用部分代码)
+      const text = typeof value === "string" ? value : value?.text || "";
+      const html = typeof value === "string" ? null : value?.html || null;
+      const imageDataUrl = typeof value === "string" ? null : value?.imageDataUrl || null;
+      const image = imageDataUrl ? nativeImage.createFromDataURL(imageDataUrl) : null;
+
+      if (image && !image.isEmpty()) {
+        clipboard.write({ text, html: html || undefined, image });
+      } else if (html) {
+        clipboard.write({ text: text || htmlToText(html), html });
+      } else {
+        clipboard.writeText(text || "");
+      }
+
+      // 更新指纹避免重复抓取
+      lastClipboardFingerprint = [text.slice(0, 160), html ? html.slice(0, 80) : "", imageDataUrl ? `img:${imageDataUrl.length}` : ""].join("|");
+
+      // 2. 隐藏窗口
+      if (mainWindow) {
+        mainWindow.hide();
+      }
+
+      // 3. 模拟 Cmd+V
+      if (process.platform === "darwin") {
+        setTimeout(() => {
+          const { exec } = require("child_process");
+          exec(`osascript -e 'tell application "System Events" to keystroke "v" using {command down}'`);
+        }, 150); // 稍微增加延迟确保焦点切换成功
+      }
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: "paste failed" };
+    }
+  });
+
   ipcMain.handle("window:toggle", async () => toggleMainWindow());
 
   ipcMain.handle("clipboard:capture-now", async () => captureClipboardNow("manual"));

@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("macos", {
 
   readClipboard: () => ipcRenderer.invoke("clipboard:read"),
   writeClipboard: (value) => ipcRenderer.invoke("clipboard:write", value),
+  pasteAndHide: (value) => ipcRenderer.invoke("clipboard:paste-and-hide", value),
   captureClipboardNow: () => ipcRenderer.invoke("clipboard:capture-now"),
 
   toggleWindow: () => ipcRenderer.invoke("window:toggle"),
