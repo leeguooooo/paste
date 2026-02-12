@@ -1,3 +1,4 @@
+const { randomUUID } = require("node:crypto");
 const {
   app,
   BrowserWindow,
@@ -14,8 +15,11 @@ const path = require("node:path");
 
 const isDev = !app.isPackaged;
 const devUrl = "http://127.0.0.1:5174";
-const configFile = path.join(app.getPath("userData"), "paste-macos-config.json");
 
+const configFile = path.join(app.getPath("userData"), "paste-macos-config.json");
+const localClipsFile = path.join(app.getPath("userData"), "paste-local-clips.json");
+
+// Keep a conservative limit even in local mode to avoid huge on-disk JSON.
 const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
 
 let mainWindow = null;
@@ -24,10 +28,14 @@ let clipboardTimer = null;
 let lastClipboardFingerprint = "";
 
 const defaultConfig = {
-  apiBase: "https://pasteapi.misonote.com/v1",
+  // Empty means local-only mode (no remote sync).
+  apiBase: "",
   userId: "mac_user_demo",
   deviceId: "macos_desktop",
-  autoCapture: true
+  autoCapture: true,
+  // Paste-like options: 30d / 180d / 365d / forever
+  // Favorites are kept even when expiring.
+  retention: "180d"
 };
 
 const readConfig = () => {
@@ -37,16 +45,151 @@ const readConfig = () => {
       return { ...defaultConfig };
     }
     const parsed = JSON.parse(fs.readFileSync(configFile, "utf-8"));
-    return { ...defaultConfig, ...parsed };
+    return { ...defaultConfig, ...(parsed || {}) };
   } catch {
     return { ...defaultConfig };
   }
 };
 
 const writeConfig = (next) => {
-  const merged = { ...defaultConfig, ...next };
+  const merged = { ...defaultConfig, ...(next || {}) };
   fs.writeFileSync(configFile, JSON.stringify(merged, null, 2));
   return merged;
+};
+
+const isRemoteEnabled = (cfg) => typeof cfg?.apiBase === "string" && /^https?:\/\//i.test(cfg.apiBase.trim());
+
+const localOk = (data) => ({ ok: true, data });
+const localFail = (message) => ({ ok: false, code: "LOCAL_ERROR", message });
+
+const readLocalDb = () => {
+  try {
+    if (!fs.existsSync(localClipsFile)) {
+      const initial = { clips: [] };
+      fs.writeFileSync(localClipsFile, JSON.stringify(initial, null, 2));
+      return initial;
+    }
+    const parsed = JSON.parse(fs.readFileSync(localClipsFile, "utf-8"));
+    if (!parsed || !Array.isArray(parsed.clips)) return { clips: [] };
+    return parsed;
+  } catch {
+    return { clips: [] };
+  }
+};
+
+const writeLocalDb = (db) => {
+  fs.writeFileSync(localClipsFile, JSON.stringify(db, null, 2));
+};
+
+const retentionMsFromConfig = (cfg) => {
+  const r = (cfg?.retention || "180d").toString().trim();
+  if (r === "forever") return null;
+  const match = r.match(/^(\d+)d$/i);
+  if (!match) return 180 * 24 * 60 * 60 * 1000;
+  const days = Number(match[1]);
+  if (!Number.isFinite(days) || days <= 0) return 180 * 24 * 60 * 60 * 1000;
+  return days * 24 * 60 * 60 * 1000;
+};
+
+const cleanupLocalDb = (cfg, db) => {
+  const now = Date.now();
+  const ms = retentionMsFromConfig(cfg);
+  let clips = Array.isArray(db?.clips) ? db.clips : [];
+
+  if (ms !== null) {
+    const cutoff = now - ms;
+    clips = clips.filter((c) => c && (c.isFavorite || (c.createdAt ?? 0) >= cutoff));
+  }
+
+  const MAX_LOCAL_CLIPS = 5000;
+  if (clips.length > MAX_LOCAL_CLIPS) {
+    const favorites = clips.filter((c) => c?.isFavorite);
+    const rest = clips
+      .filter((c) => !c?.isFavorite)
+      .sort((a, b) => (b?.createdAt ?? 0) - (a?.createdAt ?? 0));
+    clips = favorites.concat(rest).slice(0, MAX_LOCAL_CLIPS);
+  }
+
+  clips.sort((a, b) => (b?.createdAt ?? 0) - (a?.createdAt ?? 0));
+  return { clips };
+};
+
+const localListClips = (cfg, query = {}) => {
+  const q = (query.q || "").toString().trim().toLowerCase();
+  const favoriteOnly = Boolean(query.favorite);
+
+  const cleaned = cleanupLocalDb(cfg, readLocalDb());
+  writeLocalDb(cleaned);
+
+  let items = cleaned.clips;
+  if (favoriteOnly) items = items.filter((c) => c?.isFavorite);
+
+  if (q) {
+    items = items.filter((c) => {
+      const summary = (c?.summary || "").toString().toLowerCase();
+      const content = (c?.content || "").toString().toLowerCase();
+      const sourceUrl = (c?.sourceUrl || "").toString().toLowerCase();
+      const html = (c?.contentHtml || "").toString().toLowerCase();
+      return summary.includes(q) || content.includes(q) || sourceUrl.includes(q) || html.includes(q);
+    });
+  }
+
+  const limit = 60;
+  return localOk({ items: items.slice(0, limit), nextCursor: null, hasMore: items.length > limit });
+};
+
+const localCreateClip = (cfg, payload) => {
+  const now = Date.now();
+  const db = readLocalDb();
+  const clips = Array.isArray(db.clips) ? db.clips : [];
+
+  const clip = {
+    id: payload?.id || randomUUID(),
+    userId: cfg.userId || "local",
+    deviceId: cfg.deviceId || "macos",
+    type:
+      payload?.type ||
+      (payload?.imageDataUrl ? "image" : payload?.sourceUrl ? "link" : payload?.contentHtml ? "html" : "text"),
+    summary:
+      (payload?.summary || "").toString().trim() ||
+      ((payload?.type === "image" || payload?.imageDataUrl) ? "Image" : (payload?.content || "").toString().trim().slice(0, 120) || "Untitled"),
+    content: (payload?.content || "").toString(),
+    contentHtml: payload?.contentHtml ?? null,
+    sourceUrl: payload?.sourceUrl ?? null,
+    imageDataUrl: payload?.imageDataUrl ?? null,
+    isFavorite: Boolean(payload?.isFavorite),
+    isDeleted: false,
+    tags: Array.isArray(payload?.tags) ? payload.tags : [],
+    clientUpdatedAt: payload?.clientUpdatedAt ?? now,
+    serverUpdatedAt: now,
+    createdAt: now
+  };
+
+  const cleaned = cleanupLocalDb(cfg, { clips: [clip, ...clips] });
+  writeLocalDb(cleaned);
+  return localOk(clip);
+};
+
+const localToggleFavorite = (cfg, id, isFavorite) => {
+  const db = readLocalDb();
+  const clips = Array.isArray(db.clips) ? db.clips : [];
+  const next = clips.map((c) =>
+    c?.id === id
+      ? { ...c, isFavorite: Boolean(isFavorite), serverUpdatedAt: Date.now() }
+      : c
+  );
+  const cleaned = cleanupLocalDb(cfg, { clips: next });
+  writeLocalDb(cleaned);
+  return localOk({ ok: true });
+};
+
+const localDeleteClip = (cfg, id) => {
+  const db = readLocalDb();
+  const clips = Array.isArray(db.clips) ? db.clips : [];
+  const next = clips.filter((c) => c?.id !== id);
+  const cleaned = cleanupLocalDb(cfg, { clips: next });
+  writeLocalDb(cleaned);
+  return localOk({ ok: true });
 };
 
 const isProbablyUrl = (value) => /^https?:\/\/\S+$/i.test((value || "").trim());
@@ -79,7 +222,10 @@ const hasMeaningfulHtml = (html, text) => {
   if (!plain) {
     return /<img\b|<table\b|<a\b/i.test(normalized);
   }
-  return plain !== (text || "").trim() || /<img\b|<table\b|<a\b|<code\b|<pre\b/i.test(normalized);
+  return (
+    plain !== (text || "").trim() ||
+    /<img\b|<table\b|<a\b|<code\b|<pre\b/i.test(normalized)
+  );
 };
 
 const buildClipboardPayload = () => {
@@ -95,7 +241,7 @@ const buildClipboardPayload = () => {
       return {
         ok: false,
         captured: false,
-        reason: `Image too large for current storage mode (${dataUrl.length} chars)`
+        reason: `Image too large (${dataUrl.length} chars)`
       };
     }
 
@@ -165,9 +311,9 @@ const payloadFingerprint = (payload) =>
     payload.imageDataUrl ? `image:${payload.imageDataUrl.length}` : ""
   ].join("|");
 
-const apiRequest = async (pathname, init = {}) => {
-  const cfg = readConfig();
-  const url = `${cfg.apiBase}${pathname}`;
+const remoteRequest = async (cfg, pathname, init = {}) => {
+  const base = cfg.apiBase.trim().replace(/\/$/g, "");
+  const url = `${base}${pathname}`;
   const headers = {
     "content-type": "application/json",
     "x-user-id": cfg.userId,
@@ -196,12 +342,21 @@ const apiRequest = async (pathname, init = {}) => {
 };
 
 const createClipFromPayload = async (payload, source = "watcher") => {
+  const cfg = readConfig();
   const body = {
     ...payload,
     tags: source === "watcher" ? ["auto"] : payload.tags || []
   };
 
-  const res = await apiRequest("/clips", {
+  if (!isRemoteEnabled(cfg)) {
+    const res = localCreateClip(cfg, body);
+    if (res.ok) {
+      return { ok: true, captured: true };
+    }
+    return { ok: false, captured: false, reason: res.message || "capture failed" };
+  }
+
+  const res = await remoteRequest(cfg, "/clips", {
     method: "POST",
     body: JSON.stringify(body)
   });
@@ -235,18 +390,6 @@ const captureClipboardNow = async (source = "manual") => {
   return result;
 };
 
-const positionPanelWindow = () => {
-  if (!mainWindow) return;
-  const display = screen.getPrimaryDisplay();
-  const workArea = display.workArea;
-  const bounds = mainWindow.getBounds();
-  const width = Math.min(bounds.width, Math.floor(workArea.width * 0.94));
-  const height = Math.min(bounds.height, Math.floor(workArea.height * 0.86));
-  const x = Math.floor(workArea.x + (workArea.width - width) / 2);
-  const y = Math.floor(workArea.y + workArea.height - height - 28);
-  mainWindow.setBounds({ x, y, width, height });
-};
-
 const safeLoadURL = async (win, url) => {
   for (let attempt = 1; attempt <= 20; attempt++) {
     try {
@@ -273,25 +416,23 @@ const toggleMainWindow = () => {
     return { visible: false };
   }
 
-  positionPanelWindow();
   mainWindow.show();
   mainWindow.focus();
   return { visible: true };
 };
 
 const createMainWindow = async () => {
-  const { screen } = require("electron");
   const display = screen.getPrimaryDisplay();
   const { width, height } = display.bounds;
 
   mainWindow = new BrowserWindow({
-    width: width,
-    height: height,
+    width,
+    height,
     x: 0,
     y: 0,
     show: false,
     frame: false,
-    transparent: true, // Crucial for full-screen overlay
+    transparent: true,
     backgroundColor: "#00000000",
     hasShadow: false,
     resizable: false,
@@ -302,10 +443,8 @@ const createMainWindow = async () => {
     skipTaskbar: true,
     alwaysOnTop: true,
     autoHideMenuBar: true,
-    // Keep vibrancy if you want the bar itself to be blurred, 
-    // but the background dimming will be CSS.
     visualEffectState: "active",
-    vibrancy: "hud", 
+    vibrancy: "hud",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -313,9 +452,6 @@ const createMainWindow = async () => {
       sandbox: false
     }
   });
-
-  // Remove positionPanelWindow call as we are manually sizing it to full screen
-  // positionPanelWindow();
 
   if (isDev) {
     await safeLoadURL(mainWindow, devUrl);
@@ -389,20 +525,43 @@ const setupIpc = () => {
   ipcMain.handle("config:get", async () => readConfig());
 
   ipcMain.handle("config:set", async (_, next) => {
-    writeConfig(next || {});
+    const merged = writeConfig(next || {});
+    // Apply retention cleanup in local mode.
+    if (!isRemoteEnabled(merged)) {
+      writeLocalDb(cleanupLocalDb(merged, readLocalDb()));
+    }
     return { ok: true };
   });
 
   ipcMain.handle("clips:list", async (_, query = {}) => {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localListClips(cfg, query);
+    }
+
     const params = new URLSearchParams();
     if (query.q) params.set("q", query.q);
     if (query.favorite) params.set("favorite", "1");
     params.set("limit", "60");
-    return apiRequest(`/clips?${params.toString()}`);
+    return remoteRequest(cfg, `/clips?${params.toString()}`);
   });
 
   ipcMain.handle("clips:create", async (_, payload) => {
-    return apiRequest("/clips", {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localCreateClip(cfg, {
+        content: payload?.content || "",
+        summary: payload?.summary,
+        type: payload?.type,
+        contentHtml: payload?.contentHtml ?? null,
+        sourceUrl: payload?.sourceUrl ?? null,
+        imageDataUrl: payload?.imageDataUrl ?? null,
+        tags: payload?.tags || [],
+        clientUpdatedAt: Date.now()
+      });
+    }
+
+    return remoteRequest(cfg, "/clips", {
       method: "POST",
       body: JSON.stringify({
         content: payload?.content || "",
@@ -418,7 +577,12 @@ const setupIpc = () => {
   });
 
   ipcMain.handle("clips:favorite", async (_, id, isFavorite) => {
-    return apiRequest(`/clips/${encodeURIComponent(id)}`, {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localToggleFavorite(cfg, id, isFavorite);
+    }
+
+    return remoteRequest(cfg, `/clips/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify({
         isFavorite,
@@ -428,7 +592,12 @@ const setupIpc = () => {
   });
 
   ipcMain.handle("clips:delete", async (_, id) => {
-    return apiRequest(`/clips/${encodeURIComponent(id)}`, {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localDeleteClip(cfg, id);
+    }
+
+    return remoteRequest(cfg, `/clips/${encodeURIComponent(id)}`, {
       method: "DELETE",
       body: JSON.stringify({
         clientUpdatedAt: Date.now()
@@ -491,6 +660,13 @@ app.on("ready", async () => {
 
   app.setName("paste");
   setupIpc();
+
+  // Run a retention cleanup at startup in local mode.
+  const cfg = readConfig();
+  if (!isRemoteEnabled(cfg)) {
+    writeLocalDb(cleanupLocalDb(cfg, readLocalDb()));
+  }
+
   await createMainWindow();
   createTray();
   registerGlobalShortcut();

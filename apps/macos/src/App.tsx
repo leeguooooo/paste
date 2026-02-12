@@ -19,13 +19,15 @@ type AppConfig = {
   userId: string;
   deviceId: string;
   autoCapture: boolean;
+  retention: "30d" | "180d" | "365d" | "forever";
 };
 
 const emptyConfig: AppConfig = {
-  apiBase: "https://pasteapi.misonote.com/v1",
+  apiBase: "",
   userId: "mac_user_demo",
   deviceId: "macos_desktop",
-  autoCapture: true
+  autoCapture: true,
+  retention: "180d"
 };
 
 const htmlToText = (html?: string | null): string =>
@@ -316,32 +318,82 @@ export default function App() {
             
             <div style={{ display: 'grid', gap: 16 }}>
               <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>API Endpoint</label>
-                <input 
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
+                  Sync API Endpoint (optional)
+                </label>
+                <input
                   style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
+                  placeholder="https://your-api.example.com/v1 (empty = local only)"
                   value={config.apiBase}
-                  onChange={e => setConfig({...config, apiBase: e.target.value})}
+                  onChange={e => setConfig({ ...config, apiBase: e.target.value })}
                 />
+                <div
+                  style={{
+                    marginTop: 6,
+                    fontSize: 12,
+                    color: config.apiBase.trim() ? '#2d6a4f' : '#888'
+                  }}
+                >
+                  {config.apiBase.trim() ? 'Remote sync: ON' : 'Remote sync: OFF (local-only)'}
+                </div>
               </div>
+
               <div>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>User ID</label>
-                <input 
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
+                  User ID (sync only)
+                </label>
+                <input
                   style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
                   value={config.userId}
-                  onChange={e => setConfig({...config, userId: e.target.value})}
+                  disabled={!config.apiBase.trim()}
+                  onChange={e => setConfig({ ...config, userId: e.target.value })}
                 />
               </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
+                  Device ID (sync only)
+                </label>
+                <input
+                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
+                  value={config.deviceId}
+                  disabled={!config.apiBase.trim()}
+                  onChange={e => setConfig({ ...config, deviceId: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>
+                  Local retention
+                </label>
+                <select
+                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
+                  value={config.retention}
+                  onChange={e =>
+                    setConfig({ ...config, retention: e.target.value as AppConfig['retention'] })
+                  }
+                >
+                  <option value="30d">30 days</option>
+                  <option value="180d">6 months</option>
+                  <option value="365d">1 year</option>
+                  <option value="forever">Forever</option>
+                </select>
+                <div style={{ marginTop: 6, fontSize: 12, color: '#888' }}>
+                  Favorites are kept when expiring.
+                </div>
+              </div>
+
               <div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
-                  <input 
+                  <input
                     type="checkbox"
                     checked={config.autoCapture}
-                    onChange={e => setConfig({...config, autoCapture: e.target.checked})}
+                    onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}
                   />
                   Auto-capture clipboard history
                 </label>
               </div>
-              
+
               <button 
                 onClick={saveConfig}
                 style={{ 
