@@ -1,56 +1,72 @@
 # paste
 
-一个基于 Cloudflare 的 Paste 替代方案，目标是：
+Open-source, free **Paste.app alternative**.
 
-- 免费可用（Workers + Pages + R2 + D1 + KV）
-- Web 优先，同时支持“可安装应用”（PWA）
-- 后续新增 iOS 客户端（复用同一套 API 与数据模型）
-- 核心功能对标 Paste（剪贴板历史、搜索、收藏、同步、分类）
-- 已支持结构化内容：`text`/`link`/`html`/`image`（含基础图片 Data URL 存储）
+`paste` is a local-first clipboard manager for macOS (Paste-style), with an optional Cloudflare backend for cross-device sync.
 
-## 当前能力
+- macOS: tray app, no main window, Quick Paste panel
+- Local-first: no URL required; empty URL means local-only (no remote sync)
+- Optional sync: Cloudflare Workers + D1 (and R2 later for large blobs)
 
-- Web/PWA: 浏览、搜索、标签、收藏、同步
-- API: `text`/`link`/`html`/`image`（图片当前以 Data URL 方式存 D1，约 1_500_000 字符上限；大附件后续迁移 R2）
-- macOS: Electron 托盘常驻，无主窗口；默认本地模式（不填 URL 不同步）；支持本地保留 30天/半年/一年/永久（收藏不清理）
+## Keywords / 关键词
 
-## 仓库结构
+These are here for discovery (GitHub + search engines):
+
+- paste alternative
+- Paste.app alternative
+- open paste
+- open source clipboard manager
+- clipboard history
+- clipboard manager macOS
+- clipboard sync
+- snippets
+- tag/favorite/search clipboard
+- PWA clipboard manager
+- Cloudflare Workers clipboard
+
+中文关键词：
+
+- Paste 替代
+- 剪贴板管理器
+- 剪贴板历史
+- macOS 剪贴板工具
+- 多设备同步
+- 标签 / 收藏 / 搜索
+- 开源 Paste
+
+## Current Features
+
+- Web/PWA: browse, search, tags, favorites, sync
+- API: `text`/`link`/`html`/`image` (image uses Data URL in D1 for now; about 1_500_000 chars limit; large blobs will move to R2)
+- macOS: Electron tray app; default local-only; retention: 30 days / 6 months / 1 year / forever (favorites are kept)
+
+## Repo Structure
 
 ```txt
 apps/
   api/          # Cloudflare Worker API
-  web/          # Cloudflare Pages 前端
-  macos/        # Electron macOS 桌面端（Paste 风格）
+  web/          # Cloudflare Pages frontend
+  macos/        # Electron macOS desktop app (Paste-style)
 packages/
-  shared/       # 跨端共享类型/协议
+  shared/       # Shared types/contracts
 docs/
   architecture.md
   todo-roadmap.md
 ```
 
-## 技术选型（当前实现）
+## Local Development
 
-- Runtime: Cloudflare Workers
-- Frontend Hosting: Cloudflare Pages
-- Shared Contract: TypeScript workspace package
-- Data Plane:
-  - D1: 条目、标签、同步时间戳（已接入）
-  - R2: 大文本/附件（下一阶段）
-  - KV: 热缓存与热点查询（下一阶段）
-
-## 本地开发
-
-先创建 D1（只需要一次）：
+Create D1 once:
 
 ```bash
 cd apps/api
 wrangler d1 create paste-db
-# 把输出的 database_id 回填到 apps/api/wrangler.toml
+# Fill database_id back into apps/api/wrangler.toml
 wrangler d1 migrations apply paste-db --local
 cd ../..
 ```
 
-可选：启用 KV 热缓存（推荐）：
+Optional KV cache:
 
 ```toml
 # apps/api/wrangler.toml
@@ -59,7 +75,7 @@ binding = "CACHE"
 id = "<your-kv-namespace-id>"
 ```
 
-然后启动开发环境：
+Run dev:
 
 ```bash
 npm install
@@ -68,38 +84,33 @@ npm run dev:web
 npm run dev:macos
 ```
 
-运行 API 自动化冒烟测试：
+API smoke test:
 
 ```bash
 npm run test:api:smoke
 ```
 
-## 当前核心 API（无登录版）
+## API (No Auth Phase)
 
-无登录阶段通过请求头标识用户和设备：
+Identity via headers (until auth is added):
 
 - `x-user-id: your-user-id`
 - `x-device-id: your-device-id`
 
-已实现接口：
+Endpoints:
 
 - `GET /v1/health`
-- `GET /v1/clips`（支持 `q`、`tag`、`favorite`、`cursor`、`limit`）
+- `GET /v1/clips` (supports `q`, `tag`, `favorite`, `cursor`, `limit`)
 - `POST /v1/clips`
 - `PATCH /v1/clips/:id`
-- `DELETE /v1/clips/:id`（软删除）
+- `DELETE /v1/clips/:id` (soft delete)
 - `GET /v1/tags`
 - `POST /v1/tags`
 - `DELETE /v1/tags/:id`
 - `GET /v1/sync/pull?since=...&limit=...`
-- `POST /v1/sync/push`（LWW 冲突策略）
+- `POST /v1/sync/push` (LWW by `clientUpdatedAt`)
 
-性能说明：
-
-- 默认第一页列表查询（`GET /v1/clips?limit=50` 且无筛选）支持可选 KV 热缓存。
-- 未配置 KV 也可正常运行，仅回退 D1。
-
-示例：
+Example:
 
 ```bash
 curl -X POST http://127.0.0.1:8787/v1/clips \
@@ -114,17 +125,21 @@ curl -X POST http://127.0.0.1:8787/v1/clips \
   }'
 ```
 
-## 部署
+## Deploy
 
 ```bash
 npm run deploy:api
 npm run deploy:web
 ```
 
-## 文档
+## Docs
 
-- 架构设计: `docs/architecture.md`
-- 分阶段 TODO: `docs/todo-roadmap.md`
-- API 契约: `docs/api-contract.md`
-- 前端对接: `docs/frontend-handoff.md`
-- macOS 路线图: `docs/macos-roadmap.md`
+- Architecture: `docs/architecture.md`
+- Roadmap: `docs/todo-roadmap.md`
+- API contract: `docs/api-contract.md`
+- Frontend handoff: `docs/frontend-handoff.md`
+- macOS roadmap: `docs/macos-roadmap.md`
+
+## Trademark Note
+
+Paste is a product name owned by its respective owners. This project is an independent, open-source alternative.
