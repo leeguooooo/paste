@@ -250,6 +250,22 @@ const cleanupLocalDb = (cfg, db) => {
   const ms = retentionMsFromConfig(cfg);
   let clips = Array.isArray(db?.clips) ? db.clips : [];
 
+  // Collapse consecutive duplicates (newest-first) to avoid self-capture loops and
+  // noisy histories. We only de-dupe adjacent items so that "A, B, A" remains.
+  const DUPLICATE_COLLAPSE_WINDOW_MS = 60_000;
+  const dedupeKey = (c) => {
+    if (!c) return "";
+    const type = (c.type || "").toString();
+    const content = (c.content || "").toString().trim().slice(0, 200);
+    const sourceUrl = (c.sourceUrl || "").toString().trim();
+    const html = (c.contentHtml || "").toString().trim().slice(0, 200);
+    const img =
+      typeof c.imageDataUrl === "string" && c.imageDataUrl
+        ? `${c.imageDataUrl.slice(0, 64)}:${c.imageDataUrl.length}`
+        : "";
+    return [type, content, sourceUrl, html, img].join("|");
+  };
+
   if (ms !== null) {
     const cutoff = now - ms;
     clips = clips.filter((c) => c && (c.isFavorite || (c.createdAt ?? 0) >= cutoff));
@@ -265,6 +281,36 @@ const cleanupLocalDb = (cfg, db) => {
   }
 
   clips.sort((a, b) => (b?.createdAt ?? 0) - (a?.createdAt ?? 0));
+
+  // De-dupe after sorting so consecutive equals can be collapsed.
+  const collapsed = [];
+  for (const clip of clips) {
+    const prev = collapsed.length ? collapsed[collapsed.length - 1] : null;
+    if (!prev) {
+      collapsed.push(clip);
+      continue;
+    }
+    const prevKey = dedupeKey(prev);
+    const clipKey = dedupeKey(clip);
+    const prevAt = prev?.createdAt ?? prev?.serverUpdatedAt ?? 0;
+    const clipAt = clip?.createdAt ?? clip?.serverUpdatedAt ?? 0;
+    const closeEnough =
+      Number.isFinite(prevAt) &&
+      Number.isFinite(clipAt) &&
+      Math.abs(prevAt - clipAt) <= DUPLICATE_COLLAPSE_WINDOW_MS;
+    if (prevKey && prevKey === clipKey && closeEnough) {
+      // Preserve "favorite" and merge tags.
+      const prevTags = Array.isArray(prev.tags) ? prev.tags : [];
+      const nextTags = Array.isArray(clip.tags) ? clip.tags : [];
+      const mergedTags = Array.from(new Set(prevTags.concat(nextTags)));
+      prev.isFavorite = Boolean(prev.isFavorite || clip.isFavorite);
+      prev.tags = mergedTags;
+      continue;
+    }
+    collapsed.push(clip);
+  }
+
+  clips = collapsed;
   return { clips };
 };
 
@@ -567,6 +613,24 @@ const payloadFingerprint = (payload) =>
     payload.contentHtml ? payload.contentHtml.slice(0, 160) : "",
     payload.imageDataUrl ? `image:${payload.imageDataUrl.length}` : ""
   ].join("|");
+
+const syncClipboardFingerprintsFromSystemClipboard = () => {
+  // Keep both probe + payload fingerprints aligned with the real clipboard, so
+  // the watcher doesn't re-capture content we just wrote ourselves.
+  try {
+    lastClipboardProbeFingerprint = probeClipboardFingerprint();
+  } catch {
+    // ignore
+  }
+  try {
+    const built = buildClipboardPayload();
+    if (built && built.ok && built.captured && built.payload) {
+      lastClipboardFingerprint = payloadFingerprint(built.payload);
+    }
+  } catch {
+    // ignore
+  }
+};
 
 const hashPrefix = (buf) => {
   try {
@@ -1336,16 +1400,7 @@ const setupIpc = () => {
         clipboard.writeText(text || "");
       }
 
-      lastClipboardFingerprint = [
-        text.slice(0, 160),
-        html ? html.slice(0, 80) : "",
-        imageDataUrl ? `img:${imageDataUrl.length}` : ""
-      ].join("|");
-      lastClipboardProbeFingerprint = [
-        text.slice(0, 160),
-        html ? html.slice(0, 80) : "",
-        imageDataUrl ? `img:${imageDataUrl.length}` : ""
-      ].join("|");
+      syncClipboardFingerprintsFromSystemClipboard();
 
       return { ok: true };
     } catch (error) {
@@ -1411,8 +1466,8 @@ const setupIpc = () => {
         clipboard.writeText(text || "");
       }
 
-      // 更新指纹避免重复抓取
-      lastClipboardFingerprint = [text.slice(0, 160), html ? html.slice(0, 80) : "", imageDataUrl ? `img:${imageDataUrl.length}` : ""].join("|");
+      // Update fingerprints to avoid the watcher re-capturing what we just wrote.
+      syncClipboardFingerprintsFromSystemClipboard();
 
       // 2. 隐藏窗口
       if (mainWindow) {

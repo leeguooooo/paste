@@ -18,6 +18,8 @@ import {
   Smartphone
 } from "lucide-react";
 
+type ClipCardItem = ClipItem & { __demo?: boolean };
+
 type AppConfig = {
   apiBase: string;
   userId: string;
@@ -73,6 +75,91 @@ const formatAgeShort = (createdAtMs: number): string => {
   if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
   if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
   return `${Math.floor(delta / 86_400_000)}d`;
+};
+
+const DEMO_SVG_DATA_URL =
+  "data:image/svg+xml;base64," +
+  btoa(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#007aff"/>
+          <stop offset="1" stop-color="#af52de"/>
+        </linearGradient>
+      </defs>
+      <rect width="360" height="240" rx="28" fill="#0b0b0b"/>
+      <rect x="18" y="18" width="324" height="204" rx="22" fill="url(#g)" opacity="0.35"/>
+      <rect x="34" y="38" width="292" height="40" rx="14" fill="rgba(255,255,255,0.14)"/>
+      <rect x="34" y="92" width="220" height="16" rx="8" fill="rgba(255,255,255,0.20)"/>
+      <rect x="34" y="118" width="260" height="16" rx="8" fill="rgba(255,255,255,0.16)"/>
+      <rect x="34" y="144" width="190" height="16" rx="8" fill="rgba(255,255,255,0.12)"/>
+      <text x="44" y="64" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto" font-size="16" fill="rgba(255,255,255,0.92)" font-weight="700">Paste Demo</text>
+    </svg>`
+  );
+
+const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
+  const now = Date.now();
+  const base = {
+    userId,
+    deviceId,
+    isFavorite: false,
+    isDeleted: false,
+    tags: [],
+    clientUpdatedAt: now,
+    serverUpdatedAt: now,
+  };
+
+  return [
+    {
+      ...base,
+      __demo: true,
+      id: "demo:text",
+      type: "text",
+      summary: "欢迎使用 Paste",
+      content: "欢迎使用 Paste。点击任意卡片可复制示例内容。",
+      createdAt: now - 9_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:link",
+      type: "link",
+      summary: "链接示例",
+      content: "https://github.com/leeguooooo/paste",
+      sourceUrl: "https://github.com/leeguooooo/paste",
+      createdAt: now - 32_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:code",
+      type: "code",
+      summary: "代码片段",
+      content: "curl -sS https://pasteapi.misonote.com/v1/health",
+      createdAt: now - 56_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:html",
+      type: "html",
+      summary: "HTML 示例",
+      content: "<strong>Paste</strong> is local-first.",
+      contentHtml: "<strong>Paste</strong> is local-first.",
+      createdAt: now - 120_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:image",
+      type: "image",
+      summary: "图片示例",
+      content: "Paste demo image",
+      imagePreviewDataUrl: DEMO_SVG_DATA_URL,
+      imageDataUrl: DEMO_SVG_DATA_URL,
+      createdAt: now - 240_000,
+    },
+  ];
 };
 
 export default function App() {
@@ -313,6 +400,20 @@ export default function App() {
     }
   };
 
+  const handleCopyDemo = async (clip: ClipCardItem) => {
+    // For the empty state demo cards, don't hide the window or paste into another app.
+    // Just copy into the system clipboard so the user can try Cmd+V anywhere.
+    const value =
+      clip.type === "image"
+        ? { text: clip.content, imageDataUrl: clip.imageDataUrl ?? clip.imagePreviewDataUrl ?? null }
+        : { text: clip.content, html: clip.contentHtml ?? null };
+
+    const res = await window.macos.writeClipboard(value);
+    if (!res?.ok) {
+      alert(res?.message || "Copy failed");
+    }
+  };
+
   const handleDelete = async (id: string) => {
     const res = await window.macos.deleteClip(id);
     if (res?.ok) {
@@ -441,6 +542,9 @@ export default function App() {
     return <div className="preview-text">{previewTextById.get(clip.id) ?? ""}</div>;
   };
 
+  const showDemo = !loading && clips.length === 0 && query.trim() === "";
+  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(config.userId, config.deviceId) : clips;
+
   const saveConfig = async () => {
     const res = await window.macos.setConfig(config);
     if (res.ok) {
@@ -494,7 +598,7 @@ export default function App() {
         </div>
 
         <div className="history-container" ref={scrollContainerRef}>
-          {clips.map((clip, index) => {
+          {visibleClips.map((clip, index) => {
             const isSelected = index === selectedIndex;
             const device = getDeviceMeta(clip.deviceId);
             const accent = getTypeAccent(clip.type);
@@ -512,6 +616,10 @@ export default function App() {
                 onClick={() => {
                   selectionReasonRef.current = "click";
                   setSelectedIndex(index);
+                  if (clip.__demo) {
+                    void handleCopyDemo(clip);
+                    return;
+                  }
                   void handleCopy(clip);
                 }}
               >
@@ -520,17 +628,19 @@ export default function App() {
                     <span className="clip-type-pill">{clip.type}</span>
                     <span className="clip-age">{age}</span>
                   </div>
-                  <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
-                      aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
-                      onClick={(e) => { e.stopPropagation(); void handleToggleFavorite(clip); }}
-                      type="button"
-                      title="Favorite"
-                    >
-                      <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
-                    </button>
-                  </div>
+                  {!clip.__demo && (
+                    <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
+                        aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
+                        onClick={(e) => { e.stopPropagation(); void handleToggleFavorite(clip); }}
+                        type="button"
+                        title="Favorite"
+                      >
+                        <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="clip-preview">
                   {renderPreview(clip)}
@@ -541,7 +651,9 @@ export default function App() {
                     {device.icon}
                     <span>{device.label}</span>
                   </div>
-                  <div className="clip-hint">{isSelected ? "ENTER" : "Click to paste"}</div>
+                  <div className="clip-hint">
+                    {clip.__demo ? "Click to copy" : (isSelected ? "ENTER" : "Click to paste")}
+                  </div>
                 </div>
               </div>
             );

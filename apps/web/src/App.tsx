@@ -18,6 +18,8 @@ import {
 
 const API_BASE = "/v1";
 
+type ClipCardItem = ClipItem & { __demo?: boolean };
+
 // Default identity from localStorage for cross-device sync
 const DEFAULT_USER_ID = localStorage.getItem("paste_user_id") || "user_demo";
 const DEFAULT_DEVICE_ID = localStorage.getItem("paste_device_id") || "web_browser";
@@ -54,6 +56,70 @@ const formatAgeShort = (createdAtMs: number): string => {
   if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
   if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
   return `${Math.floor(delta / 86_400_000)}d`;
+};
+
+const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
+  const now = Date.now();
+  const base = {
+    userId,
+    deviceId,
+    isFavorite: false,
+    isDeleted: false,
+    tags: [],
+    clientUpdatedAt: now,
+    serverUpdatedAt: now,
+  };
+
+  return [
+    {
+      ...base,
+      __demo: true,
+      id: "demo:text",
+      type: "text",
+      summary: "欢迎使用 Paste",
+      content: "欢迎使用 Paste。点击任意卡片可复制示例内容。",
+      createdAt: now - 9_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:link",
+      type: "link",
+      summary: "链接示例",
+      content: "https://github.com/leeguooooo/paste",
+      sourceUrl: "https://github.com/leeguooooo/paste",
+      createdAt: now - 32_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:code",
+      type: "code",
+      summary: "代码片段",
+      content: "curl -sS https://pasteapi.misonote.com/v1/health",
+      createdAt: now - 56_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:html",
+      type: "html",
+      summary: "HTML 示例",
+      content: "<strong>Paste</strong> is local-first.",
+      contentHtml: "<strong>Paste</strong> is local-first.",
+      createdAt: now - 120_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:image",
+      type: "image",
+      summary: "图片示例",
+      content: "Paste icon",
+      imageUrl: "/icon-512.svg",
+      createdAt: now - 240_000,
+    },
+  ];
 };
 
 export default function App() {
@@ -223,6 +289,22 @@ export default function App() {
     window.setTimeout(() => setCopiedId((prev) => (prev === clip.id ? null : prev)), 900);
   };
 
+  const handleCopyDemo = async (clip: ClipCardItem) => {
+    try {
+      if (clip.type === "image") {
+        const url = clip.imageUrl || "/icon-512.svg";
+        await navigator.clipboard.writeText(String(url));
+      } else {
+        await navigator.clipboard.writeText(clip.content);
+      }
+    } catch {
+      // ignore
+    }
+
+    setCopiedId(clip.id);
+    window.setTimeout(() => setCopiedId((prev) => (prev === clip.id ? null : prev)), 900);
+  };
+
   const handleToggleFavorite = async (e: React.MouseEvent, clip: ClipItem) => {
     e.stopPropagation();
     try {
@@ -275,6 +357,9 @@ export default function App() {
     return { icon: <Cpu size={12} />, label: "DEVICE" };
   };
 
+  const showDemo = !loading && clips.length === 0 && query.trim() === "";
+  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(userId, deviceId) : clips;
+
   return (
     <main className="app-shell">
       <div className="history-shelf">
@@ -297,7 +382,7 @@ export default function App() {
         </div>
 
         <div className="history-container" ref={scrollContainerRef}>
-          {clips.map((clip, index) => {
+          {visibleClips.map((clip, index) => {
             const isSelected = index === selectedIndex;
             const isCopied = copiedId === clip.id;
             const device = getDeviceMeta(clip.deviceId);
@@ -309,23 +394,32 @@ export default function App() {
                 key={clip.id} 
                 className={`clip-card ${isSelected ? 'selected' : ''}`}
                 style={cardStyle}
-                onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
+                onClick={() => {
+                  setSelectedIndex(index);
+                  if (clip.__demo) {
+                    void handleCopyDemo(clip);
+                    return;
+                  }
+                  void handleCopy(clip);
+                }}
               >
                 <div className="clip-head">
                   <div className="clip-head-left">
                     <span className="clip-type-pill">{clip.type}</span>
                     <span className="clip-age">{age}</span>
                   </div>
-                  <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
-                      aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
-                      onClick={(e) => void handleToggleFavorite(e, clip)}
-                      type="button"
-                    >
-                      <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
-                    </button>
-                  </div>
+                  {!clip.__demo && (
+                    <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
+                        aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
+                        onClick={(e) => void handleToggleFavorite(e, clip)}
+                        type="button"
+                      >
+                        <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="clip-preview">
                   {clip.type === "image" && getImageSrc(clip) ? (
@@ -339,7 +433,9 @@ export default function App() {
                     {device.icon}
                     <span>{device.label}</span>
                   </div>
-                  <div className="clip-hint">{isCopied ? "Copied!" : "Click to copy"}</div>
+                  <div className="clip-hint">
+                    {isCopied ? "Copied!" : (clip.__demo ? "Click to try" : "Click to copy")}
+                  </div>
                 </div>
               </div>
             );

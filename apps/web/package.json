@@ -8,9 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "pages:dev": "wrangler pages dev ./dist",
-    "pages:deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web",
+    "pages:deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-marketing --branch main",
     "typecheck": "tsc --noEmit",
-    "deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web"
+    "deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-marketing --branch main"
   },
   "dependencies": {
     "@paste/shared": "0.1.0",
