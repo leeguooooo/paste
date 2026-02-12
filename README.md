@@ -214,8 +214,13 @@ curl -X POST http://127.0.0.1:8787/v1/clips \
 ## Deploy
 
 ```bash
+npm run deploy
+# same as:
+npm run deploy:prod
+# or deploy individually:
 npm run deploy:api
 npm run deploy:web
+npm run deploy:landing
 ```
 
 For forks: `apps/api/wrangler.toml` includes `misonote.com` routes. Replace them with your own domain/routes (or remove `routes` to use `*.workers.dev`).
