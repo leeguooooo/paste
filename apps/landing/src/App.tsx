@@ -14,7 +14,7 @@ export default function App() {
             <span className="font-bold text-xl tracking-tight">Paste</span>
           </div>
           <div className="flex items-center gap-6">
-            <a href="https://github.com" className="text-sm font-medium text-white/60 hover:text-white transition-colors">Source Code</a>
+            <a href="https://github.com/leeguooooo/paste" className="text-sm font-medium text-white/60 hover:text-white transition-colors">Source Code</a>
             <a href="https://paste.misonote.com" className="bg-white text-black px-4 py-1.5 rounded-full text-sm font-semibold hover:bg-white/90 transition-all active:scale-95">Open Web App</a>
           </div>
         </div>
@@ -38,36 +38,45 @@ export default function App() {
             </p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <button className="w-full sm:w-auto px-8 py-4 bg-white text-black rounded-2xl font-bold text-lg flex items-center justify-center gap-2 hover:bg-white/90 transition-all active:scale-95">
+              <a
+                href="https://github.com/leeguooooo/paste/releases/latest"
+                className="w-full sm:w-auto px-8 py-4 bg-white text-black rounded-2xl font-bold text-lg flex items-center justify-center gap-2 hover:bg-white/90 transition-all active:scale-95"
+              >
                 <Download size={20} />
                 Download for macOS
-              </button>
-              <a href="https://github.com" className="w-full sm:w-auto px-8 py-4 bg-white/5 border border-white/10 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-95">
+              </a>
+              <a href="https://github.com/leeguooooo/paste" className="w-full sm:w-auto px-8 py-4 bg-white/5 border border-white/10 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-95">
                 <Github size={20} />
                 View on GitHub
               </a>
             </div>
           </motion.div>
 
-          {/* App Preview Mockup */}
+          {/* Product Previews */}
           <motion.div 
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.8 }}
-            className="mt-20 relative max-w-5xl mx-auto"
+            className="mt-20 relative max-w-6xl mx-auto"
           >
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-2 backdrop-blur-3xl shadow-2xl overflow-hidden">
-              <div className="aspect-[16/9] rounded-2xl bg-[#1a1a1a] flex items-end overflow-hidden">
-                {/* Simulated Tray */}
-                <div className="w-full h-1/3 bg-[#111]/80 border-t border-white/10 p-4 flex gap-4">
-                  {[1, 2, 3, 4].map((i) => (
-                    <div key={i} className="h-full aspect-[1.4/1] bg-white/5 rounded-xl border border-white/10" />
-                  ))}
-                </div>
-              </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
+              <ProductShot
+                label="macOS app"
+                title="Fast, native clipboard history"
+                description="Search, pin, and sync your clipboard across devices. Built for speed and privacy."
+                src="/product/macos.svg"
+                alt="Paste macOS app screenshot"
+              />
+              <ProductShot
+                label="Web app"
+                title="Your clipboard, anywhere"
+                description="Access and manage your history from the browser. Fully synced with the desktop client."
+                src="/product/web.svg"
+                alt="Paste web app screenshot"
+              />
             </div>
-            {/* Glossy decorative element */}
-            <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-3/4 h-20 bg-blue-500/20 blur-[80px]" />
+
+            <div className="absolute -bottom-14 left-1/2 -translate-x-1/2 w-4/5 h-24 bg-blue-500/20 blur-[90px]" />
           </motion.div>
         </div>
       </section>
@@ -108,6 +117,40 @@ export default function App() {
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+function ProductShot({
+  label,
+  title,
+  description,
+  src,
+  alt,
+}: {
+  label: string;
+  title: string;
+  description: string;
+  src: string;
+  alt: string;
+}) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl shadow-2xl overflow-hidden">
+      <div className="p-6 border-b border-white/10">
+        <div className="text-xs font-semibold tracking-wider uppercase text-white/50">{label}</div>
+        <div className="mt-2 text-2xl font-extrabold tracking-tight">{title}</div>
+        <div className="mt-2 text-sm text-white/50 leading-relaxed">{description}</div>
+      </div>
+      <div className="p-3">
+        <div className="rounded-2xl overflow-hidden border border-white/10 bg-[#0b0b0b]">
+          <img
+            src={src}
+            alt={alt}
+            loading="lazy"
+            className="w-full h-auto block"
+          />
+        </div>
+      </div>
     </div>
   );
 }

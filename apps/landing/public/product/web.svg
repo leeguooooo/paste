@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#050505"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#a7f3d0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#bg)"/>
+
+  <!-- Browser frame -->
+  <g filter="url(#shadow)">
+    <rect x="160" y="150" width="1280" height="700" rx="26" fill="url(#glass)" stroke="#ffffff" stroke-opacity="0.10"/>
+    <rect x="160" y="150" width="1280" height="62" rx="26" fill="#0a0a0a" opacity="0.55"/>
+    <circle cx="204" cy="181" r="8" fill="#ff5f56"/>
+    <circle cx="228" cy="181" r="8" fill="#ffbd2e"/>
+    <circle cx="252" cy="181" r="8" fill="#27c93f"/>
+    <rect x="288" y="172" width="840" height="18" rx="9" fill="#ffffff" opacity="0.10"/>
+    <rect x="1148" y="172" width="260" height="18" rx="9" fill="#ffffff" opacity="0.06"/>
+
+    <!-- App header -->
+    <rect x="190" y="236" width="1220" height="78" rx="18" fill="#ffffff" opacity="0.04" stroke="#ffffff" stroke-opacity="0.07"/>
+    <rect x="220" y="262" width="200" height="18" rx="9" fill="url(#accent)" opacity="0.85"/>
+    <rect x="444" y="262" width="220" height="18" rx="9" fill="#ffffff" opacity="0.10"/>
+    <rect x="1180" y="255" width="200" height="32" rx="16" fill="#ffffff" opacity="0.10"/>
+
+    <!-- Two-column layout -->
+    <rect x="190" y="334" width="360" height="486" rx="18" fill="#ffffff" opacity="0.03" stroke="#ffffff" stroke-opacity="0.07"/>
+    <rect x="220" y="366" width="300" height="14" rx="7" fill="#ffffff" opacity="0.20"/>
+    <rect x="220" y="402" width="260" height="12" rx="6" fill="#ffffff" opacity="0.12"/>
+    <rect x="220" y="432" width="280" height="12" rx="6" fill="#ffffff" opacity="0.12"/>
+    <rect x="220" y="462" width="220" height="12" rx="6" fill="#ffffff" opacity="0.12"/>
+
+    <rect x="576" y="334" width="834" height="486" rx="18" fill="#ffffff" opacity="0.03" stroke="#ffffff" stroke-opacity="0.07"/>
+    <rect x="606" y="366" width="520" height="14" rx="7" fill="#ffffff" opacity="0.20"/>
+    <rect x="606" y="394" width="420" height="10" rx="5" fill="#ffffff" opacity="0.12"/>
+    <rect x="606" y="432" width="774" height="110" rx="16" fill="#ffffff" opacity="0.04" stroke="#ffffff" stroke-opacity="0.07"/>
+    <rect x="634" y="464" width="420" height="14" rx="7" fill="#ffffff" opacity="0.22"/>
+    <rect x="634" y="492" width="320" height="10" rx="5" fill="#ffffff" opacity="0.12"/>
+    <rect x="606" y="566" width="774" height="110" rx="16" fill="#ffffff" opacity="0.04" stroke="#ffffff" stroke-opacity="0.07"/>
+    <rect x="634" y="598" width="460" height="14" rx="7" fill="#ffffff" opacity="0.22"/>
+    <rect x="634" y="626" width="280" height="10" rx="5" fill="#ffffff" opacity="0.12"/>
+    <rect x="606" y="700" width="774" height="90" rx="16" fill="#ffffff" opacity="0.04" stroke="#ffffff" stroke-opacity="0.07"/>
+    <rect x="634" y="730" width="380" height="14" rx="7" fill="#ffffff" opacity="0.22"/>
+  </g>
+
+  <!-- Caption -->
+  <g>
+    <rect x="160" y="892" width="1280" height="64" rx="18" fill="#000000" opacity="0.25"/>
+    <text x="200" y="934" fill="#ffffff" opacity="0.70"
+      font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+      font-size="20">
+      Paste Web (replace this placeholder with a real screenshot: public/product/web.(png|jpg|webp))
+    </text>
+  </g>
+</svg>
+

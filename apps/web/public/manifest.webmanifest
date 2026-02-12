@@ -1,7 +1,7 @@
 {
-  "name": "paste",
-  "short_name": "paste",
-  "description": "Paste-like clipboard manager on Cloudflare",
+  "name": "Paste",
+  "short_name": "Paste",
+  "description": "Open-source clipboard manager (macOS + Web) with optional Cloudflare sync",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f7fbff",
@@ -19,4 +19,3 @@
     }
   ]
 }
-

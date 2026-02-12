@@ -102,6 +102,20 @@ const getFrontmostApp = () => {
   }
 };
 
+const getFrontmostAppAsync = async () => {
+  try {
+    // Faster than resolving "id of application frontAppName" in many setups.
+    const out = await runAppleScript([
+      'tell application "System Events" to set p to first application process whose frontmost is true',
+      'return (name of p) & "\t" & (bundle identifier of p)'
+    ]);
+    const [name = "", bundleId = ""] = String(out).split("\t");
+    return { name, bundleId };
+  } catch {
+    return { name: "", bundleId: "" };
+  }
+};
+
 const waitForFrontmostApp = async ({ name, bundleId, timeoutMs = 1500 }) => {
   const start = Date.now();
   for (;;) {
@@ -114,16 +128,25 @@ const waitForFrontmostApp = async ({ name, bundleId, timeoutMs = 1500 }) => {
   }
 };
 
-const tryCaptureFrontmostAppTarget = () => {
-  // Capture the app that was frontmost before showing our overlay. We use this later to
-  // reactivate it so Cmd+V goes back to the original input field.
-  try {
-    const { name, bundleId } = getFrontmostApp();
-    if (!name || !bundleId) return;
-    if (String(name).toLowerCase() === String(app.getName() || "").toLowerCase()) return;
-    lastTargetApp = { name, bundleId, at: Date.now() };
-  } catch {
-    // ignore
+const waitForFrontmostNonSelfAppAsync = async ({ timeoutMs = 1500 } = {}) => {
+  const selfName = String(app.getName() || "").toLowerCase();
+  const start = Date.now();
+  let last = { name: "", bundleId: "" };
+
+  for (;;) {
+    const cur = await getFrontmostAppAsync();
+    last = cur;
+    const curName = String(cur?.name || "").toLowerCase();
+
+    // If our overlay is hidden, the frontmost app should switch back to the target app.
+    if (cur?.name && curName && curName !== selfName) {
+      return cur;
+    }
+
+    if (Date.now() - start >= timeoutMs) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60));
   }
 };
 
@@ -771,8 +794,6 @@ const toggleMainWindow = async () => {
     return { visible: false };
   }
 
-  // Record the app currently receiving input before we take focus.
-  tryCaptureFrontmostAppTarget();
   win.show();
   win.focus();
   return { visible: true };
@@ -781,7 +802,6 @@ const toggleMainWindow = async () => {
 const showSettings = async () => {
   const win = await ensureMainWindow();
   if (!win) return;
-  tryCaptureFrontmostAppTarget();
   win.show();
   win.focus();
   broadcastToWindows("ui:open-settings", { at: Date.now() });
@@ -1399,31 +1419,23 @@ const setupIpc = () => {
         mainWindow.hide();
       }
 
-      // 3. 切回原来前台应用，再模拟 Cmd+V
+      // 3. 切回前台应用，再模拟 Cmd+V
       if (process.platform === "darwin") {
-        const targetBundleId = lastTargetApp?.bundleId || "";
-        const targetName = lastTargetApp?.name || "";
-        const targetCapturedAt = lastTargetApp?.at || 0;
+        // After hiding our always-on-top overlay, macOS should restore focus to the original app.
+        // Resolve that app here instead of doing synchronous osascript work on the hotkey path.
+        await new Promise((resolve) => setTimeout(resolve, 40));
 
-        if (!targetBundleId && !targetName) {
-          // Still try to paste to whatever is frontmost after hiding, but include diagnostics.
-          try {
-            await runAppleScript(['tell application "System Events" to keystroke "v" using {command down}']);
-            return {
-              ok: true,
-              message: "pasted without target app (no target captured)"
-            };
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : "paste failed";
-            return {
-              ok: false,
-              message:
-                `paste failed: ${msg}\n\n` +
-                `No target app was captured before opening the overlay.\n` +
-                `If this keeps happening, enable Accessibility for "${app.getName()}" in System Settings -> Privacy & Security -> Accessibility.`
-            };
-          }
+        const resolved = await waitForFrontmostNonSelfAppAsync({ timeoutMs: 1500 });
+        if (resolved?.name || resolved?.bundleId) {
+          lastTargetApp = { name: resolved?.name || "", bundleId: resolved?.bundleId || "", at: Date.now() };
         }
+        const fallback = lastTargetApp || { name: "", bundleId: "", at: 0 };
+        const targetName = resolved?.name || fallback.name || "";
+        const targetBundleId = resolved?.bundleId || fallback.bundleId || "";
+        const targetCapturedAt = fallback?.at || 0;
+
+        const hasTarget = Boolean(targetName || targetBundleId);
+
         if (targetBundleId) {
           try {
             await runAppleScript([`tell application id "${targetBundleId}" to activate`]);
@@ -1432,8 +1444,10 @@ const setupIpc = () => {
           }
         }
 
-        // Wait until the original app is truly frontmost; fixed sleeps are flaky.
-        const frontOk = await waitForFrontmostApp({ name: targetName, bundleId: targetBundleId, timeoutMs: 1500 });
+        // Wait until the target app is truly frontmost; fixed sleeps are flaky.
+        const frontOk = hasTarget
+          ? await waitForFrontmostApp({ name: targetName, bundleId: targetBundleId, timeoutMs: 1500 })
+          : true;
         try {
           if (targetName) {
             const safeName = String(targetName).replace(/\"/g, "\\\"");

@@ -1,6 +1,4 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import path from "path";
 
 const normalizeSiteUrl = (value: string): string => value.replace(/\/+$/, "");
 
@@ -20,14 +18,16 @@ const makeSitemapXml = (baseUrl: string): string => `<?xml version="1.0" encodin
 
 export default defineConfig({
   plugins: [
-    react(),
     {
       name: "paste-seo",
-      transformIndexHtml(html) {
-        return html
-          .replaceAll("__SITE_URL__", siteUrl)
-          .replaceAll("__OG_IMAGE_URL__", ogImageUrl)
-          .replaceAll("__GITHUB_URL__", githubUrl);
+      transformIndexHtml: {
+        order: "pre",
+        handler(html) {
+          return html
+            .replaceAll("__SITE_URL__", siteUrl)
+            .replaceAll("__OG_IMAGE_URL__", ogImageUrl)
+            .replaceAll("__GITHUB_URL__", githubUrl);
+        },
       },
       generateBundle() {
         this.emitFile({
@@ -55,19 +55,4 @@ export default defineConfig({
       },
     },
   ],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
-  server: {
-    port: 3000,
-    proxy: {
-      "/v1": {
-        // `wrangler dev` defaults to 8787; override if you run it elsewhere.
-        target: process.env.PASTE_API_PROXY_TARGET || "http://localhost:8787",
-        changeOrigin: true,
-      },
-    },
-  },
 });

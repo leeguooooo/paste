@@ -3,14 +3,41 @@
   --card-height: 200px;
   --gap: 28px;
   --primary: #007aff;
+  
+  /* Shared Visual Palette */
+  --accent-blue: #007aff;
+  --accent-orange: #ff9500;
+  --accent-purple: #af52de;
+  --accent-green: #34c759;
+  --accent-pink: #ff2d55;
+  --accent-gray: #8e8e93;
+
+  /* macOS App usually defaults to system preference, but we'll define both */
+  --shelf-bg: rgba(245, 245, 247, 0.8);
   --card-bg: #ffffff;
-  --card-fg: #0f172a;
-  --card-muted: rgba(15, 23, 42, 0.55);
-  /* 调高不透明度，从 0.75 -> 0.92，增加实体感 */
-  --shelf-bg: rgba(32, 32, 32, 0.92);
-  /* Paste 风格的超大柔和投影 */
-  --shadow-lifted: 0 30px 60px rgba(0,0,0,0.45), 0 10px 20px rgba(0,0,0,0.3);
-  --shadow-normal: 0 4px 12px rgba(0,0,0,0.2);
+  --card-fg: #1d1d1f;
+  --card-muted: rgba(0, 0, 0, 0.5);
+  --border-color: rgba(0, 0, 0, 0.08);
+  --shadow-normal: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --shadow-selected: 0 24px 48px rgba(0, 0, 0, 0.16);
+  --pill-bg: rgba(255, 255, 255, 0.45);
+  --pill-fg: rgba(0, 0, 0, 0.7);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --shelf-bg: rgba(30, 30, 30, 0.85);
+    --card-bg: #2c2c2e;
+    --card-fg: #f5f5f7;
+    --card-muted: rgba(255, 255, 255, 0.5);
+    --border-color: rgba(255, 255, 255, 0.1);
+    --shadow-normal: 0 8px 24px rgba(0, 0, 0, 0.2);
+    --shadow-hover: 0 16px 40px rgba(0, 0, 0, 0.3);
+    --shadow-selected: 0 32px 64px rgba(0, 0, 0, 0.4);
+    --pill-bg: rgba(0, 0, 0, 0.2);
+    --pill-fg: rgba(255, 255, 255, 0.8);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -20,7 +47,8 @@ body {
   padding: 0;
   overflow: hidden;
   background: transparent !important;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif;
+  -webkit-font-smoothing: antialiased;
   user-select: none;
 }
 
@@ -30,37 +58,32 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.02); /* 极简背景，确保透明 */
+  background: transparent;
   transition: background 0.3s ease;
 }
 
-/* 激活时背景轻微调暗，产生聚焦感 */
 .app-shell.active {
   background: rgba(0, 0, 0, 0.15);
 }
 
-/* 底部托盘：增加弹簧感动画 */
 .history-shelf {
-  height: 340px;
+  height: 350px;
   background: var(--shelf-bg);
-  backdrop-filter: blur(60px) saturate(200%) brightness(100%);
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(60px) saturate(210%);
+  border-top: 0.5px solid var(--border-color);
   display: flex;
   flex-direction: column;
   padding-top: 30px;
   position: relative;
-  box-shadow: 0 -15px 50px rgba(0,0,0,0.5);
-  /* 模拟 macOS 原生弹簧动画 */
+  box-shadow: 0 -15px 50px rgba(0,0,0,0.3);
   animation: springUp 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.1);
-  will-change: transform, opacity;
 }
 
 @keyframes springUp {
-  from { transform: translateY(100%); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
 
-/* 搜索框：更精致的半透明效果 */
 .toolbar {
   position: absolute;
   top: -65px;
@@ -72,31 +95,25 @@ body {
 }
 
 .search-input {
-  width: 420px;
-  background: rgba(30, 30, 30, 0.98);
+  width: 440px;
+  background: rgba(44, 44, 46, 0.7);
   backdrop-filter: blur(30px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
-  padding: 14px 20px 14px 46px;
+  padding: 14px 20px 14px 48px;
   color: white;
   font-size: 16px;
   font-weight: 500;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.25);
   outline: none;
-  /* Avoid `transition: all` to reduce style/layout thrash during animations. */
-  transition:
-    width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .search-input:focus {
-  width: 480px;
-  background: rgba(55, 55, 55, 0.95);
+  width: 500px;
   border-color: var(--primary);
 }
 
-/* 滚动带：隐藏滚动条但保留物理感 */
 .history-container {
   flex: 1;
   display: flex;
@@ -105,344 +122,186 @@ body {
   padding: 0 80px 30px 80px;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-snap-type: x mandatory;
   scrollbar-width: none;
 }
 
 .history-container::-webkit-scrollbar { display: none; }
 
-/* 卡片重构：高度模拟 Paste */
 .clip-card {
   flex: 0 0 var(--card-width);
   height: var(--card-height);
   background: var(--card-bg);
   color: var(--card-fg);
-  border: 1px solid rgba(2, 6, 23, 0.10);
-  border-radius: 18px;
-  scroll-snap-align: center;
-  /*
-    Keep transitions on compositor-friendly properties. Animating box-shadow
-    frequently causes repaints and jank in Chromium/Electron.
-  */
-  transition:
-    transform 0.4s cubic-bezier(0.23, 1, 0.32, 1),
-    border-color 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 0.5px solid var(--border-color);
+  border-radius: 20px;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  transform: translateZ(0);
-  will-change: transform;
-  contain: layout paint;
-  box-shadow:
-    0 18px 42px rgba(0, 0, 0, 0.22),
-    0 2px 0 rgba(255, 255, 255, 0.25) inset;
+  box-shadow: var(--shadow-normal);
+  cursor: pointer;
 }
 
 .clip-card:hover {
-  transform: translateY(-6px) scale(1.04);
-  border-color: color-mix(in srgb, var(--accent, var(--primary)) 60%, rgba(2, 6, 23, 0.10));
-  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: var(--shadow-hover);
 }
 
 .clip-card.selected {
-  transform: scale(1.08) translateY(-12px);
-  border: 2px solid color-mix(in srgb, var(--accent, var(--primary)) 70%, rgba(2, 6, 23, 0.10));
-  box-shadow: var(--shadow-lifted);
+  transform: scale(1.06) translateY(-12px);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-selected);
   z-index: 10;
 }
 
 .clip-head {
-  height: 40px;
-  padding: 0 12px;
+  height: 44px;
+  padding: 0 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--accent, var(--primary)) 78%, white),
-      color-mix(in srgb, var(--accent, var(--primary)) 55%, white)
-    );
-  border-bottom: 1px solid rgba(2, 6, 23, 0.06);
+  background: linear-gradient(135deg, var(--accent, var(--primary)), color-mix(in srgb, var(--accent, var(--primary)), white 20%));
+}
+
+@media (prefers-color-scheme: dark) {
+  .clip-head {
+    background: linear-gradient(135deg, var(--accent, var(--primary)), color-mix(in srgb, var(--accent, var(--primary)), black 20%));
+  }
 }
 
 .clip-head-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
-.clip-type {
-  font-size: 11px;
-  letter-spacing: 0.12em;
+.clip-type-pill {
+  font-size: 10px;
   font-weight: 800;
-  color: rgba(2, 6, 23, 0.75);
   text-transform: uppercase;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(2, 6, 23, 0.08);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  background: var(--pill-bg);
+  color: var(--pill-fg);
+  backdrop-filter: blur(8px);
+  border-radius: 6px;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
 }
 
 .clip-age {
   font-size: 11px;
-  font-weight: 700;
-  color: rgba(2, 6, 23, 0.55);
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }
 
 .clip-fav {
   appearance: none;
   border: 0;
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(2, 6, 23, 0.08);
-  border-radius: 10px;
-  padding: 6px;
+  background: var(--pill-bg);
+  color: rgba(255, 255, 255, 0.8);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(2, 6, 23, 0.55);
   cursor: pointer;
-  transition: transform 0.15s, background 0.15s, color 0.15s;
+  transition: all 0.2s;
+  backdrop-filter: blur(8px);
 }
 
-.clip-fav:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.75); color: rgba(2, 6, 23, 0.75); }
-.clip-fav.on { color: rgba(2, 6, 23, 0.9); }
+.clip-fav:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.3); }
+.clip-fav.on { color: #ffcc00; }
 
 .clip-preview {
   flex: 1;
-  padding: 20px;
+  padding: 16px 18px;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--card-fg);
   display: flex;
   align-items: flex-start;
-  justify-content: flex-start;
   overflow: hidden;
-  background:
-    radial-gradient(60px 60px at 20% 20%, rgba(0, 0, 0, 0.04), transparent 60%),
-    radial-gradient(80px 80px at 80% 30%, rgba(0, 0, 0, 0.03), transparent 55%);
 }
 
 .clip-image-preview {
   width: 100%;
   height: 100%;
-  display: block;
   object-fit: cover;
-  border-radius: 14px;
-  background: rgba(2, 6, 23, 0.04);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.03);
+  box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.1);
 }
 
 .preview-text {
   text-align: left;
   display: -webkit-box;
-  -webkit-line-clamp: 7;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  word-break: break-all;
-  color: rgba(2, 6, 23, 0.86);
+  word-break: break-word;
 }
 
 .clip-footer {
   height: 38px;
   padding: 0 16px;
-  background: rgba(2, 6, 23, 0.03);
+  background: rgba(0, 0, 0, 0.02);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
   font-size: 11px;
   color: var(--card-muted);
-  font-weight: 700;
+  font-weight: 600;
+  border-top: 0.5px solid var(--border-color);
+}
+
+@media (prefers-color-scheme: dark) {
+  .clip-footer { background: rgba(255, 255, 255, 0.02); }
 }
 
 .clip-device {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
-  color: rgba(2, 6, 23, 0.55);
-}
-
-.clip-device span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--card-muted);
 }
 
 .clip-hint {
-  color: rgba(2, 6, 23, 0.42);
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  opacity: 0;
+  transform: translateX(10px);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--primary);
+  font-weight: 700;
 }
 
-/* --- Settings & Preferences --- */
-.settings-overlay {
-  position: fixed;
-  inset: 0;
-  background: transparent;
-  z-index: 500;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fadeIn 0.2s ease-out;
-  will-change: opacity;
+.clip-card:hover .clip-hint,
+.clip-card.selected .clip-hint {
+  opacity: 1;
+  transform: translateX(0);
 }
 
-.settings-backdrop {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scale(1.08);
-  filter: blur(28px) saturate(180%) brightness(90%);
-  pointer-events: none;
-  user-select: none;
-}
-
-.settings-scrim {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-}
-
+/* Settings Refinement */
 .settings-panel {
   width: 440px;
-  background: rgba(45, 45, 45, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 24px;
+  background: var(--card-bg);
+  backdrop-filter: blur(40px);
+  border: 0.5px solid var(--border-color);
+  border-radius: 28px;
   padding: 32px;
-  color: white;
-  box-shadow: 0 40px 100px rgba(0,0,0,0.6);
-  animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, opacity;
-  position: relative;
-}
-
-@keyframes scaleUp {
-  from { transform: scale(0.95); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
-}
-
-.settings-panel h2 {
-  margin: 0 0 28px 0;
-  font-size: 18px;
-  font-weight: 700;
-  text-align: center;
+  color: var(--card-fg);
+  box-shadow: 0 40px 100px rgba(0,0,0,0.5);
 }
 
 .settings-section {
-  margin-bottom: 20px;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 18px;
+  background: rgba(0, 0, 0, 0.03);
+  padding: 20px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 24px;
 }
 
-.settings-section-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.35);
-  margin-bottom: 14px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-}
-
-.settings-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-
-.settings-row label {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.settings-row input[type="text"] {
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  padding: 10px 14px;
-  color: white;
-  font-size: 13px;
-  outline: none;
-}
-
-.settings-row input[type="text"]:focus {
-  border-color: var(--primary);
-}
-
-.checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  cursor: pointer;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
-}
-
-.settings-actions {
-  display: flex;
-  gap: 12px;
-}
-
-.btn-save {
-  flex: 1.5;
-  background: var(--primary);
-  border: none;
-  border-radius: 12px;
-  padding: 12px;
-  color: white;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.btn-cancel {
-  flex: 1;
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
-  border-radius: 12px;
-  padding: 12px;
-  color: white;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-/* --- Utilities --- */
-.icon-btn {
-  background: transparent;
-  border: none;
-  color: rgba(255, 255, 255, 0.5);
-  cursor: pointer;
-  padding: 6px;
-  border-radius: 8px;
-  transition: color 0.2s, background-color 0.2s;
-}
-
-.icon-btn:hover {
-  color: white;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .history-shelf,
-  .settings-overlay,
-  .settings-panel {
-    animation: none !important;
-  }
-  .search-input,
-  .clip-card,
-  .icon-btn {
-    transition: none !important;
-  }
+@media (prefers-color-scheme: dark) {
+  .settings-section { background: rgba(255, 255, 255, 0.03); }
 }

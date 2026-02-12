@@ -57,12 +57,12 @@ const getPreviewDataUrl = (clip: ClipItem): string | null => {
 
 const getTypeAccent = (type: ClipType): string => {
   switch (type) {
-    case "link": return "#3B82F6";
-    case "text": return "#F59E0B";
-    case "code": return "#A855F7";
-    case "html": return "#22C55E";
-    case "image": return "#FB7185";
-    default: return "#64748B";
+    case "link": return "var(--accent-blue)";
+    case "text": return "var(--accent-orange)";
+    case "code": return "var(--accent-purple)";
+    case "html": return "var(--accent-green)";
+    case "image": return "var(--accent-pink)";
+    default: return "var(--accent-gray)";
   }
 };
 
@@ -517,7 +517,7 @@ export default function App() {
               >
                 <div className="clip-head">
                   <div className="clip-head-left">
-                    <span className="clip-type">{clip.type.toUpperCase()}</span>
+                    <span className="clip-type-pill">{clip.type}</span>
                     <span className="clip-age">{age}</span>
                   </div>
                   <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
