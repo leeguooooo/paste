@@ -234,7 +234,7 @@ export default function App() {
                 onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
               />
             </div>
-            <button className="icon-btn" onClick={() => setShowSettings(true)}>
+            <button className="icon-btn" onClick={() => setShowSettings(true)} title="Settings (Cmd+,)">
               <Settings size={22} />
             </button>
           </div>
