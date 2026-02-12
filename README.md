@@ -1,5 +1,7 @@
 # paste
 
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/leeguooooo?logo=github)](https://github.com/sponsors/leeguooooo)
+
 Open-source, free **Paste.app alternative**.
 
 `paste` is a local-first clipboard manager for macOS (Paste-style), with an optional Cloudflare backend for cross-device sync.
@@ -187,6 +189,20 @@ npm run deploy:web
 ## Trademark Note
 
 Paste is a product name owned by its respective owners. This project is an independent, open-source alternative.
+
+## Support / 赞助开发
+
+开源不易。如果这个项目对你有帮助，欢迎 Star 或赞助支持作者继续维护。
+
+- GitHub Sponsors: https://github.com/sponsors/leeguooooo
+- 微信 / 支付宝赞赏码见下方
+
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/leeguooooo?style=for-the-badge&logo=github)](https://github.com/sponsors/leeguooooo)
+
+<div align="center">
+  <img src=".github/wechatpay.JPG" alt="微信赞赏码" width="300" />
+  <img src=".github/alipay.JPG" alt="支付宝收款码" width="300" />
+</div>
 
 ## Release
 

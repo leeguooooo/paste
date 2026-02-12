@@ -1,0 +1,23 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- macOS Rounded Rectangle Base -->
+  <rect x="128" y="128" width="768" height="768" rx="172" fill="url(#paint0_linear)"/>
+  
+  <!-- Subtle Inner Shadow/Border -->
+  <rect x="132" y="132" width="760" height="760" rx="168" stroke="white" stroke-opacity="0.2" stroke-width="8"/>
+  
+  <!-- Clipboard Symbol -->
+  <path d="M412 300C412 277.909 429.909 260 452 260H572C594.091 260 612 277.909 612 300V320H412V300Z" fill="white" fill-opacity="0.9"/>
+  <rect x="360" y="320" width="304" height="420" rx="24" fill="white" fill-opacity="0.9"/>
+  
+  <!-- Stack Detail -->
+  <rect x="420" y="440" width="184" height="24" rx="12" fill="#007AFF" fill-opacity="0.2"/>
+  <rect x="420" y="500" width="184" height="24" rx="12" fill="#007AFF" fill-opacity="0.2"/>
+  <rect x="420" y="560" width="120" height="24" rx="12" fill="#007AFF" fill-opacity="0.2"/>
+
+  <defs>
+    <linearGradient id="paint0_linear" x1="512" y1="128" x2="512" y2="896" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34C759"/>
+      <stop offset="1" stop-color="#007AFF"/>
+    </linearGradient>
+  </defs>
+</svg>

@@ -53,5 +53,6 @@
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true
-  }
+  },
+  "afterPack": "electron/afterPack.cjs"
 }
