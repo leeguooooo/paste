@@ -1,7 +1,7 @@
 {
   "name": "@paste/macos",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,8 +11,8 @@
     "build:renderer": "vite build",
     "build": "npm run build:renderer",
     "typecheck": "tsc --noEmit",
-    "pack": "npm run build:renderer && electron-builder --config electron-builder.json --dir",
-    "dist": "npm run build:renderer && electron-builder --config electron-builder.json"
+    "pack": "npm run build:renderer && electron-builder --config electron-builder.json --publish never --dir",
+    "dist": "npm run build:renderer && electron-builder --config electron-builder.json --publish never"
   },
   "dependencies": {
     "@paste/shared": "0.1.0",
@@ -25,10 +25,12 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.1",
-    "electron": "^37.2.3",
+    "electron": "37.2.3",
     "electron-builder": "^26.7.0",
     "typescript": "^5.8.2",
     "vite": "^7.1.0",
     "wait-on": "^8.0.5"
-  }
+  },
+  "description": "Local-first clipboard manager for macOS (Paste-style).",
+  "author": "leeguooooo"
 }
