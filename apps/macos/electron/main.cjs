@@ -26,6 +26,18 @@ let mainWindow = null;
 let tray = null;
 let clipboardTimer = null;
 let lastClipboardFingerprint = "";
+let registeredHotkey = null;
+
+const broadcastToWindows = (channel, payload) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win || win.isDestroyed()) continue;
+    try {
+      win.webContents.send(channel, payload);
+    } catch {
+      // ignore
+    }
+  }
+};
 
 const defaultConfig = {
   // Empty means local-only mode (no remote sync).
@@ -36,7 +48,8 @@ const defaultConfig = {
   launchAtLogin: false,
   // Paste-like options: 30d / 180d / 365d / forever
   // Favorites are kept even when expiring.
-  retention: "180d"
+  retention: "180d",
+  hotkey: "CommandOrControl+Shift+V"
 };
 
 const readConfig = () => {
@@ -437,9 +450,10 @@ const captureClipboardNow = async (source = "manual") => {
     return { ok: true, captured: false, reason: "duplicated" };
   }
 
-  const result = await createClipFromPayload(built.payload, source);
+const result = await createClipFromPayload(built.payload, source);
   if (result.ok && result.captured) {
     lastClipboardFingerprint = fingerprint;
+    broadcastToWindows("clips:changed", { source, at: Date.now() });
   }
   return result;
 };
@@ -486,6 +500,7 @@ const createMainWindow = async () => {
     y: 0,
     show: false,
     frame: false,
+    icon: path.join(__dirname, "../assets/icon.svg"),
     transparent: true,
     backgroundColor: "#00000000",
     hasShadow: false,
@@ -516,6 +531,13 @@ const createMainWindow = async () => {
     if (mainWindow && mainWindow.isVisible()) {
       mainWindow.hide();
     }
+  });
+
+  mainWindow.on("show", () => {
+    broadcastToWindows("window:shown", { at: Date.now() });
+  });
+  mainWindow.on("hide", () => {
+    broadcastToWindows("window:hidden", { at: Date.now() });
   });
 
   mainWindow.on("close", (event) => {
@@ -557,10 +579,47 @@ const createTray = () => {
   tray.on("click", () => toggleMainWindow());
 };
 
-const registerGlobalShortcut = () => {
-  globalShortcut.register("CommandOrControl+Shift+V", () => {
-    toggleMainWindow();
-  });
+const registerGlobalShortcut = (hotkey) => {
+  const desired = (hotkey ?? readConfig()?.hotkey ?? defaultConfig.hotkey).toString().trim() || defaultConfig.hotkey;
+
+  if (registeredHotkey) {
+    try {
+      globalShortcut.unregister(registeredHotkey);
+    } catch {
+      // ignore
+    }
+    registeredHotkey = null;
+  }
+
+  try {
+    const ok = globalShortcut.register(desired, () => {
+      toggleMainWindow();
+    });
+    if (ok) {
+      registeredHotkey = desired;
+      return { ok: true, hotkey: desired, corrected: false };
+    }
+  } catch {
+    // fall through to fallback
+  }
+
+  // Fallback to a known-good default if the configured accelerator is invalid.
+  try {
+    const ok = globalShortcut.register(defaultConfig.hotkey, () => {
+      toggleMainWindow();
+    });
+    if (ok) {
+      registeredHotkey = defaultConfig.hotkey;
+      if (desired !== defaultConfig.hotkey) {
+        return { ok: true, hotkey: defaultConfig.hotkey, corrected: true, message: `Invalid hotkey: ${desired}` };
+      }
+      return { ok: true, hotkey: defaultConfig.hotkey, corrected: false };
+    }
+  } catch {
+    // ignore
+  }
+
+  return { ok: false, hotkey: null, corrected: false, message: "Failed to register global hotkey" };
 };
 
 const startClipboardWatcher = () => {
@@ -589,7 +648,12 @@ const setupIpc = () => {
       // ignore
     }
 
-    return { ok: true };
+    // Apply configured hotkey immediately.
+    const hk = registerGlobalShortcut(merged.hotkey);
+    if (hk.ok && hk.hotkey && hk.corrected && hk.hotkey !== merged.hotkey) {
+      writeConfig({ ...merged, hotkey: hk.hotkey });
+    }
+    return { ok: hk.ok, message: hk.message };
   });
 
   ipcMain.handle("clips:list", async (_, query = {}) => {

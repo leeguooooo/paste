@@ -55,6 +55,8 @@ export default function App() {
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const windowVisibleRef = useRef(false);
+  const refreshTimerRef = useRef<number | null>(null);
 
   const loadConfig = async () => {
     try {
@@ -79,6 +81,53 @@ export default function App() {
     void loadConfig();
     void loadClips(true);
   }, []);
+
+  useEffect(() => {
+    const scheduleRefresh = () => {
+      if (!windowVisibleRef.current) {
+        return;
+      }
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+      }
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null;
+        void loadClips();
+      }, 120);
+    };
+
+    // Main process captures clipboard even when the window is hidden. Avoid hitting
+    // IPC/network while hidden; refresh when shown (or while visible).
+    const offChanged = window.macos.onClipsChanged?.(() => {
+      scheduleRefresh();
+    });
+
+    const offShown = window.macos.onWindowShown?.(() => {
+      windowVisibleRef.current = true;
+      scheduleRefresh();
+      if (!query && !showSettings) {
+        setSelectedIndex(0);
+      }
+    });
+
+    const offHidden = window.macos.onWindowHidden?.(() => {
+      windowVisibleRef.current = false;
+    });
+
+    const onFocus = () => scheduleRefresh();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      try { offChanged?.(); } catch {}
+      try { offShown?.(); } catch {}
+      try { offHidden?.(); } catch {}
+      window.removeEventListener("focus", onFocus);
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [loadClips, query, showSettings]);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadClips(), 150);
