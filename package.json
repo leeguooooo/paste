@@ -1,0 +1,22 @@
+{
+  "name": "paste-lite",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace @paste/api run dev",
+    "dev:web": "npm --workspace @paste/web run dev",
+    "typecheck": "npm run -ws typecheck",
+    "test:api:smoke": "npm --workspace @paste/api run test:smoke",
+    "deploy:api": "npm --workspace @paste/api run deploy",
+    "deploy:web": "npm --workspace @paste/web run deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260204.0",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.3.0"
+  }
+}

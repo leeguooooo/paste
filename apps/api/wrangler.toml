@@ -1,0 +1,13 @@
+name = "paste-api"
+main = "src/index.ts"
+compatibility_date = "2026-02-12"
+
+[vars]
+APP_NAME = "paste-lite"
+API_VERSION = "v1"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "paste-db"
+database_id = "6e4e2e32-6a24-4d0a-9fe6-93ba2b725a67"
+migrations_dir = "migrations"

@@ -1,0 +1,30 @@
+{
+  "name": "@paste/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "pages:dev": "wrangler pages dev ./dist",
+    "pages:deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paste/shared": "0.1.0",
+    "bootstrap": "^5.3.3",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-bootstrap": "^2.10.9",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.8.2",
+    "vite": "^6.1.0",
+    "wrangler": "^4.3.0"
+  }
+}
