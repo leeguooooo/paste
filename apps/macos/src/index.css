@@ -24,7 +24,8 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-end; /* 所有的交互沉到底部 */
-  background: rgba(0, 0, 0, 0.3); /* 整体轻微调暗 */
+  background: rgba(0, 0, 0, 0.1); /* 降低调暗程度 */
+  backdrop-filter: blur(2px); /* 降低模糊 */
 }
 
 /* 底部托盘区域 - 约占 1/3 到 1/4 */
