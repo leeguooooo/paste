@@ -183,3 +183,24 @@ npm run deploy:web
 ## Trademark Note
 
 Paste is a product name owned by its respective owners. This project is an independent, open-source alternative.
+
+## Release
+
+This repo uses GitHub Releases.
+
+- Tag format: `vX.Y.Z` (example: `v0.1.0`)
+- GitHub Actions will build:
+  - macOS Intel (x64): `.dmg` + `.zip`
+  - macOS Apple Silicon (arm64): `.dmg` + `.zip`
+  - Windows (x64): installer `.exe` + `.zip`
+
+Create a release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Notes:
+
+- macOS builds are **unsigned** by default. For a polished distribution, add Apple code signing + notarization later.

@@ -1,0 +1,46 @@
+{
+  "appId": "com.leeguooooo.paste",
+  "productName": "paste",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "dist/**",
+    "electron/**",
+    "package.json"
+  ],
+  "asar": true,
+  "mac": {
+    "category": "public.app-category.productivity",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64", "arm64"]
+      }
+    ]
+  },
+  "dmg": {
+    "sign": false
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true
+  }
+}
