@@ -27,6 +27,17 @@ let tray = null;
 let clipboardTimer = null;
 let lastClipboardFingerprint = "";
 
+const broadcastToWindows = (channel, payload) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win || win.isDestroyed()) continue;
+    try {
+      win.webContents.send(channel, payload);
+    } catch {
+      // ignore
+    }
+  }
+};
+
 const defaultConfig = {
   // Empty means local-only mode (no remote sync).
   apiBase: "",
@@ -437,9 +448,10 @@ const captureClipboardNow = async (source = "manual") => {
     return { ok: true, captured: false, reason: "duplicated" };
   }
 
-  const result = await createClipFromPayload(built.payload, source);
+const result = await createClipFromPayload(built.payload, source);
   if (result.ok && result.captured) {
     lastClipboardFingerprint = fingerprint;
+    broadcastToWindows("clips:changed", { source, at: Date.now() });
   }
   return result;
 };
@@ -517,6 +529,10 @@ const createMainWindow = async () => {
     if (mainWindow && mainWindow.isVisible()) {
       mainWindow.hide();
     }
+  });
+
+  mainWindow.on("show", () => {
+    broadcastToWindows("window:shown", { at: Date.now() });
   });
 
   mainWindow.on("close", (event) => {

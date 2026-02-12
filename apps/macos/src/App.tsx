@@ -81,6 +81,41 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Keep the UI in sync with background captures (the main process updates the DB,
+    // but the renderer needs to refresh its list).
+    const offChanged = window.macos.onClipsChanged?.(() => {
+      void loadClips();
+      if (!query && !showSettings) {
+        setSelectedIndex(0);
+      }
+    });
+
+    const offShown = window.macos.onWindowShown?.(() => {
+      void loadClips();
+      if (!query && !showSettings) {
+        setSelectedIndex(0);
+      }
+    });
+
+    const onFocus = () => void loadClips();
+    window.addEventListener("focus", onFocus);
+
+    const onVisibility = () => {
+      if (!document.hidden) {
+        void loadClips();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      try { offChanged?.(); } catch {}
+      try { offShown?.(); } catch {}
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [loadClips, query, showSettings]);
+
+  useEffect(() => {
     const timer = setTimeout(() => void loadClips(), 150);
     return () => clearTimeout(timer);
   }, [query, loadClips]);

@@ -13,5 +13,17 @@ contextBridge.exposeInMainWorld("macos", {
   writeClipboard: (value) => ipcRenderer.invoke("clipboard:write", value),
   captureClipboardNow: () => ipcRenderer.invoke("clipboard:capture-now"),
 
-  toggleWindow: () => ipcRenderer.invoke("window:toggle")
+  toggleWindow: () => ipcRenderer.invoke("window:toggle"),
+
+  onClipsChanged: (cb) => {
+    const listener = (_evt, payload) => cb(payload);
+    ipcRenderer.on("clips:changed", listener);
+    return () => ipcRenderer.removeListener("clips:changed", listener);
+  },
+
+  onWindowShown: (cb) => {
+    const listener = (_evt, payload) => cb(payload);
+    ipcRenderer.on("window:shown", listener);
+    return () => ipcRenderer.removeListener("window:shown", listener);
+  }
 });
