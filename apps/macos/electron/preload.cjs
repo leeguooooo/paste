@@ -17,6 +17,12 @@ contextBridge.exposeInMainWorld("macos", {
 
   toggleWindow: () => ipcRenderer.invoke("window:toggle"),
 
+  onOpenSettings: (cb) => {
+    const listener = (_evt, payload) => cb(payload);
+    ipcRenderer.on("ui:open-settings", listener);
+    return () => ipcRenderer.removeListener("ui:open-settings", listener);
+  },
+
   onClipsChanged: (cb) => {
     const listener = (_evt, payload) => cb(payload);
     ipcRenderer.on("clips:changed", listener);

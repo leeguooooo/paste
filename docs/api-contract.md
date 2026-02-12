@@ -20,7 +20,7 @@
     - `includeDeleted=1` 包含软删除
     - `cursor` 分页游标
     - `limit` 默认 50，最大 200
-    - `lite=1` 轻量模式（列表不返回大字段 `contentHtml`/`imageDataUrl`，需要时用 `GET /v1/clips/:id` 取详情）
+    - `lite=1` 轻量模式（列表不返回大字段 `contentHtml`/`imageDataUrl`，但会尽量返回 `imagePreviewDataUrl` 与 `imageUrl` 以便渲染图片预览）
 - `POST /v1/clips`
   - Body:
     - `id?: string`
@@ -29,7 +29,8 @@
     - `content?: string`
     - `contentHtml?: string | null`
     - `sourceUrl?: string | null`（仅接受 `http/https`）
-    - `imageDataUrl?: string | null`（当前 D1 存储模式限制约 1_500_000 字符）
+    - `imageDataUrl?: string | null`（兼容字段：base64 `data:image/*`；若启用 R2 存储，大图会落到 R2，D1 不再存 full dataUrl）
+    - `imagePreviewDataUrl?: string | null`（推荐：用于列表预览的小图，base64 `data:image/*`）
     - `isFavorite?: boolean`
     - `isDeleted?: boolean`
     - `tags?: string[]`
@@ -37,7 +38,7 @@
 - `PATCH /v1/clips/:id`
   - Body: 同 `POST /v1/clips`（可部分更新）
 - `GET /v1/clips/:id`
-  - Response: `ClipItem`（包含 `contentHtml`/`imageDataUrl` 等详情字段）
+  - Response: `ClipItem`（包含 `contentHtml`/`imageDataUrl`/`imagePreviewDataUrl`/`imageUrl` 等详情字段）
 - `DELETE /v1/clips/:id`
   - Body(可选):
     - `clientUpdatedAt?: number`
@@ -56,7 +57,7 @@
   - Query:
     - `since` 默认 `0`
     - `limit` 默认 100，最大 300
-    - `lite=1` 轻量模式（同上，不返回 `contentHtml`/`imageDataUrl`）
+    - `lite=1` 轻量模式（同上，不返回 `contentHtml`/`imageDataUrl`，但会尽量返回 `imagePreviewDataUrl`/`imageUrl`）
   - Response:
     - `changes: ClipItem[]`
     - `nextSince: number`
@@ -69,6 +70,12 @@
     - `applied: ClipItem[]`
     - `conflicts: ClipItem[]`
     - `serverTime: number`
+
+## 4.1 图片读取（可选，R2 启用时）
+
+- `GET /v1/images/:clipId?u=<userId>&h=<sha256>`
+  - `u` 必填（用于定位 D1 记录与缓存隔离）
+  - `h` 可选；当传入且匹配服务端记录的 `sha256` 时，响应会使用 immutable cache-control
 
 ## 5. 冲突策略
 

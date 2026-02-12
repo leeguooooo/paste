@@ -183,6 +183,30 @@ body {
   letter-spacing: 0.02em;
 }
 
+.clip-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.clip-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.clip-meta-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-meta-sep {
+  opacity: 0.6;
+}
+
 /* 提示图标 */
 .shortcut-hint {
   background: rgba(255,255,255,0.1);

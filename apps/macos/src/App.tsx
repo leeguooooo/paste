@@ -14,7 +14,8 @@ import {
   Check,
   Globe,
   Cpu,
-  Monitor
+  Monitor,
+  Smartphone
 } from "lucide-react";
 
 type AppConfig = {
@@ -44,6 +45,15 @@ const htmlToText = (html?: string | null): string =>
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+const isValidImageDataUrl = (value: unknown): value is string =>
+  typeof value === "string" && value.startsWith("data:image/");
+
+const getPreviewDataUrl = (clip: ClipItem): string | null => {
+  if (isValidImageDataUrl(clip.imagePreviewDataUrl)) return clip.imagePreviewDataUrl;
+  if (isValidImageDataUrl(clip.imageDataUrl)) return clip.imageDataUrl;
+  return null;
+};
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
@@ -90,6 +100,19 @@ export default function App() {
   useEffect(() => {
     void loadConfig();
     void loadClips(true);
+  }, []);
+
+  useEffect(() => {
+    const off = window.macos.onOpenSettings?.(() => {
+      setShowSettings(true);
+    });
+    return () => {
+      try {
+        off?.();
+      } catch {
+        // ignore
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -155,7 +178,7 @@ export default function App() {
     const clip = clips[selectedIndex];
     if (!clip) return;
     if (clip.type !== "image") return;
-    if (clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/")) return;
+    if (getPreviewDataUrl(clip)) return;
 
     let cancelled = false;
     void (async () => {
@@ -214,7 +237,8 @@ export default function App() {
     let effective = clip;
     if (
       clip.type === "image" &&
-      (!clip.imageDataUrl || !String(clip.imageDataUrl).startsWith("data:image/"))
+      !isValidImageDataUrl(clip.imageDataUrl) &&
+      !(typeof clip.imageUrl === "string" && clip.imageUrl.trim())
     ) {
       try {
         const res = await window.macos.getClip(clip.id);
@@ -231,7 +255,8 @@ export default function App() {
     const res = await window.macos.pasteAndHide({
       text,
       html: effective.contentHtml ?? null,
-      imageDataUrl: effective.imageDataUrl ?? null
+      imageDataUrl: effective.imageDataUrl ?? null,
+      imageUrl: effective.imageUrl ?? null
     });
     if (!res?.ok) {
       // Surface the root error (most commonly missing Accessibility permission).
@@ -321,10 +346,34 @@ export default function App() {
     }
   };
 
+  const getDeviceMeta = (deviceId: string): { icon: React.ReactNode; label: string } => {
+    const raw = String(deviceId || "").trim();
+    const lower = raw.toLowerCase();
+
+    if (lower.includes("web") || lower.includes("browser")) {
+      return { icon: <Globe size={12} />, label: "WEB" };
+    }
+    if (lower.includes("mac")) {
+      return { icon: <Monitor size={12} />, label: "MAC" };
+    }
+    if (lower.includes("ios") || lower.includes("iphone") || lower.includes("ipad")) {
+      return { icon: <Smartphone size={12} />, label: "IOS" };
+    }
+    if (lower.includes("android")) {
+      return { icon: <Smartphone size={12} />, label: "ANDROID" };
+    }
+    if (raw) {
+      const cleaned = raw.replace(/[_-]+/g, " ").trim();
+      const short = cleaned.length > 14 ? `${cleaned.slice(0, 14)}...` : cleaned;
+      return { icon: <Cpu size={12} />, label: short.toUpperCase() };
+    }
+    return { icon: <Cpu size={12} />, label: "DEVICE" };
+  };
+
   const renderPreview = (clip: ClipItem) => {
-    const dataUrl = clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/") ? clip.imageDataUrl : null;
-    if (dataUrl) {
-      return <img src={dataUrl} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />;
+    const preview = getPreviewDataUrl(clip);
+    if (preview) {
+      return <img src={preview} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />;
     }
     return <div className="preview-text">{previewTextById.get(clip.id) ?? ""}</div>;
   };
@@ -332,9 +381,15 @@ export default function App() {
   const saveConfig = async () => {
     const res = await window.macos.setConfig(config);
     if (res.ok) {
+      if (res.message) {
+        alert(res.message);
+      }
       setShowSettings(false);
+      await loadConfig();
       void loadClips();
+      return;
     }
+    alert(res?.message || "Failed to save settings");
   };
 
   return (
@@ -378,6 +433,7 @@ export default function App() {
         <div className="history-container" ref={scrollContainerRef}>
           {clips.map((clip, index) => {
             const isSelected = index === selectedIndex;
+            const device = getDeviceMeta(clip.deviceId);
             return (
               <div 
                 key={clip.id} 
@@ -391,9 +447,16 @@ export default function App() {
                 </div>
                 
                 <div className="clip-footer">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {getIcon(clip.type)}
-                    <span style={{ textTransform: 'uppercase' }}>{clip.type}</span>
+                  <div className="clip-meta">
+                    <div className="clip-meta-item">
+                      {getIcon(clip.type)}
+                      <span style={{ textTransform: 'uppercase' }}>{clip.type}</span>
+                    </div>
+                    <span className="clip-meta-sep" aria-hidden="true">•</span>
+                    <div className="clip-meta-item" title={clip.deviceId}>
+                      {device.icon}
+                      <span>{device.label}</span>
+                    </div>
                   </div>
                   {isSelected && <span className="shortcut-hint">ENTER</span>}
                 </div>

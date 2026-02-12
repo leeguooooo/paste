@@ -26,6 +26,8 @@ const localClipsFile = path.join(app.getPath("userData"), "paste-local-clips.jso
 
 // Keep a conservative limit even in local mode to avoid huge on-disk JSON.
 const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
+// Aim for a small inline preview to keep list payloads cheap.
+const MAX_IMAGE_PREVIEW_DATA_URL_LENGTH = 250_000;
 
 let mainWindow = null;
 let tray = null;
@@ -36,6 +38,7 @@ let lastClipboardFailure = { fingerprint: "", at: 0 };
 let captureClipboardInFlight = null;
 let captureClipboardInFlightProbe = "";
 let registeredHotkey = null;
+let hotkeyStatus = { ok: true, hotkey: null, corrected: false, message: null };
 let lastTargetApp = { name: "", bundleId: "", at: 0 };
 
 const RELEASES_LATEST_URL = "https://github.com/leeguooooo/paste/releases/latest";
@@ -409,6 +412,54 @@ const buildBestImageDataUrl = (img) => {
   }
 };
 
+const buildImagePreviewDataUrl = (img) => {
+  try {
+    const baseSize = img.getSize();
+    const maxSide = Math.max(baseSize.width || 0, baseSize.height || 0);
+    const targetMaxSides = [512, 360, 256, 192];
+    const jpegQualities = [50, 40, 30, 25];
+
+    for (const target of targetMaxSides) {
+      let candidate = img;
+      if (maxSide > target) {
+        const resizeOptions = {
+          width: baseSize.width >= baseSize.height ? target : undefined,
+          height: baseSize.height > baseSize.width ? target : undefined,
+          quality: "good"
+        };
+        candidate = img.resize(resizeOptions);
+      }
+
+      for (const q of jpegQualities) {
+        let buf;
+        try {
+          buf = candidate.toJPEG(q);
+        } catch {
+          buf = null;
+        }
+        if (!buf || buf.length === 0) continue;
+        const url = `data:image/jpeg;base64,${buf.toString("base64")}`;
+        if (url.length <= MAX_IMAGE_PREVIEW_DATA_URL_LENGTH) {
+          return url;
+        }
+      }
+    }
+
+    // Fallback: tiny PNG if jpeg failed.
+    try {
+      const tiny = img.resize({ width: 192, height: 192, quality: "good" });
+      const png = tiny.toDataURL();
+      if (png && png.length <= MAX_IMAGE_PREVIEW_DATA_URL_LENGTH) return png;
+    } catch {
+      // ignore
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 const buildClipboardPayload = () => {
   const text = clipboard.readText().trim();
   const html = clipboard.readHTML().trim();
@@ -426,6 +477,7 @@ const buildClipboardPayload = () => {
       };
     }
 
+    const preview = buildImagePreviewDataUrl(image);
     const sourceUrl = isProbablyUrl(text) ? text : extractUrlFromHtml(richHtml);
     return {
       ok: true,
@@ -437,6 +489,7 @@ const buildClipboardPayload = () => {
         contentHtml: richHtml,
         sourceUrl,
         imageDataUrl: best.dataUrl,
+        imagePreviewDataUrl: preview,
         clientUpdatedAt: Date.now()
       }
     };
@@ -675,25 +728,70 @@ const safeLoadURL = async (win, url) => {
   }
 };
 
-const toggleMainWindow = () => {
-  if (!mainWindow) {
+const humanizeAccelerator = (acc) => {
+  const raw = (acc || "").toString().trim();
+  if (!raw) return "";
+  const isMac = process.platform === "darwin";
+  const map = {
+    CommandOrControl: isMac ? "Cmd" : "Ctrl",
+    Command: isMac ? "Cmd" : "Cmd",
+    Control: "Ctrl",
+    Ctrl: "Ctrl",
+    Shift: "Shift",
+    Alt: isMac ? "Option" : "Alt",
+    Option: "Option",
+    Super: isMac ? "Cmd" : "Win"
+  };
+  return raw
+    .split("+")
+    .map((p) => map[p] || p)
+    .join("+");
+};
+
+const ensureMainWindow = async () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return mainWindow;
+  }
+  try {
+    await createMainWindow();
+  } catch (error) {
+    console.error("Failed to create main window:", error);
+  }
+  return mainWindow;
+};
+
+const toggleMainWindow = async () => {
+  const win = await ensureMainWindow();
+  if (!win) {
     return { visible: false };
   }
 
-  if (mainWindow.isVisible()) {
-    mainWindow.hide();
+  if (win.isVisible()) {
+    win.hide();
     return { visible: false };
   }
 
   // Record the app currently receiving input before we take focus.
   tryCaptureFrontmostAppTarget();
-  mainWindow.show();
-  mainWindow.focus();
+  win.show();
+  win.focus();
   return { visible: true };
+};
+
+const showSettings = async () => {
+  const win = await ensureMainWindow();
+  if (!win) return;
+  tryCaptureFrontmostAppTarget();
+  win.show();
+  win.focus();
+  broadcastToWindows("ui:open-settings", { at: Date.now() });
 };
 
 const buildTrayTemplate = () => {
   const versionLabel = `Version ${app.getVersion()}`;
+  const hkLabel = hotkeyStatus?.ok
+    ? `Hotkey: ${humanizeAccelerator(hotkeyStatus.hotkey || readConfig().hotkey || defaultConfig.hotkey)}`
+    : "Hotkey: (not registered)";
 
   const updateLabel = updateState.checking
     ? "Checking for Updates..."
@@ -743,7 +841,17 @@ const buildTrayTemplate = () => {
   };
 
   const items = [
-    { label: "Show / Hide", click: () => toggleMainWindow() },
+    { label: "Show / Hide", click: () => void toggleMainWindow() },
+    { label: "Open Settings", click: () => void showSettings() },
+    { label: hkLabel, enabled: false },
+    ...(hotkeyStatus?.ok
+      ? []
+      : [
+          {
+            label: `Hotkey Error: ${hotkeyStatus?.message || "Failed to register global hotkey"}`,
+            enabled: false
+          }
+        ]),
     { type: "separator" },
     {
       label: "Capture Clipboard Now",
@@ -814,7 +922,6 @@ const createMainWindow = async () => {
     y: 0,
     show: false,
     frame: false,
-    icon: path.join(__dirname, "../assets/icon.svg"),
     transparent: true,
     backgroundColor: "#00000000",
     hasShadow: false,
@@ -867,11 +974,29 @@ const createTray = () => {
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAOCAQAAAC1QeVaAAAAKklEQVR42mP8z8DAwMgABYwMjAxwMDAwGGAAQzQwMDAA4hSYDKQdA4QAAJw3B8eEzWLWAAAAAElFTkSuQmCC"
   );
 
-  tray = new Tray(icon);
+  try {
+    if (process.platform === "darwin" && icon && !icon.isEmpty()) {
+      icon.setTemplateImage(true);
+    }
+  } catch {
+    // ignore
+  }
+
+  let trayIcon = icon;
+  try {
+    // Slightly larger improves visibility in the macOS menu bar.
+    if (trayIcon && !trayIcon.isEmpty()) {
+      trayIcon = trayIcon.resize({ width: 18, height: 18, quality: "best" });
+    }
+  } catch {
+    // ignore
+  }
+
+  tray = new Tray(trayIcon);
   tray.setToolTip("paste");
 
   updateTrayMenu();
-  tray.on("click", () => toggleMainWindow());
+  tray.on("click", () => void toggleMainWindow());
 };
 
 const setupAutoUpdate = () => {
@@ -985,35 +1110,59 @@ const registerGlobalShortcut = (hotkey) => {
     registeredHotkey = null;
   }
 
-  try {
-    const ok = globalShortcut.register(desired, () => {
-      toggleMainWindow();
-    });
-    if (ok) {
-      registeredHotkey = desired;
-      return { ok: true, hotkey: desired, corrected: false };
+  const uniq = (arr) => {
+    const out = [];
+    const seen = new Set();
+    for (const v of arr) {
+      const s = (v || "").toString().trim();
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
     }
-  } catch {
-    // fall through to fallback
+    return out;
+  };
+
+  const candidates = uniq([
+    desired,
+    defaultConfig.hotkey,
+    "CommandOrControl+Shift+Space",
+    "CommandOrControl+Shift+P",
+    "CommandOrControl+Alt+V"
+  ]);
+
+  for (const candidate of candidates) {
+    try {
+      const ok = globalShortcut.register(candidate, () => {
+        void toggleMainWindow();
+      });
+      if (!ok) continue;
+
+      registeredHotkey = candidate;
+      const corrected = candidate !== desired;
+      const message = corrected
+        ? `Hotkey unavailable: ${humanizeAccelerator(desired)}. Using: ${humanizeAccelerator(candidate)}`
+        : null;
+      hotkeyStatus = { ok: true, hotkey: candidate, corrected, message };
+      try {
+        updateTrayMenu();
+      } catch {
+        // ignore
+      }
+      return { ...hotkeyStatus };
+    } catch {
+      // try next candidate
+    }
   }
 
-  // Fallback to a known-good default if the configured accelerator is invalid.
+  hotkeyStatus = { ok: false, hotkey: null, corrected: false, message: "Failed to register global hotkey" };
   try {
-    const ok = globalShortcut.register(defaultConfig.hotkey, () => {
-      toggleMainWindow();
-    });
-    if (ok) {
-      registeredHotkey = defaultConfig.hotkey;
-      if (desired !== defaultConfig.hotkey) {
-        return { ok: true, hotkey: defaultConfig.hotkey, corrected: true, message: `Invalid hotkey: ${desired}` };
-      }
-      return { ok: true, hotkey: defaultConfig.hotkey, corrected: false };
-    }
+    updateTrayMenu();
   } catch {
     // ignore
   }
-
-  return { ok: false, hotkey: null, corrected: false, message: "Failed to register global hotkey" };
+  return { ...hotkeyStatus };
 };
 
 const startClipboardWatcher = () => {
@@ -1207,7 +1356,32 @@ const setupIpc = () => {
       const text = typeof value === "string" ? value : value?.text || "";
       const html = typeof value === "string" ? null : value?.html || null;
       const imageDataUrl = typeof value === "string" ? null : value?.imageDataUrl || null;
-      const image = imageDataUrl ? nativeImage.createFromDataURL(imageDataUrl) : null;
+      const imageUrl = typeof value === "string" ? null : value?.imageUrl || null;
+
+      let image = imageDataUrl ? nativeImage.createFromDataURL(imageDataUrl) : null;
+      if ((!image || image.isEmpty()) && imageUrl) {
+        try {
+          const cfg = readConfig();
+          if (isRemoteEnabled(cfg)) {
+            const abs = new URL(imageUrl, cfg.apiBase.trim()).toString();
+            const res = await fetch(abs, {
+              headers: {
+                "x-user-id": cfg.userId,
+                "x-device-id": cfg.deviceId
+              }
+            });
+            if (res.ok) {
+              const buf = Buffer.from(await res.arrayBuffer());
+              const candidate = nativeImage.createFromBuffer(buf);
+              if (candidate && !candidate.isEmpty()) {
+                image = candidate;
+              }
+            }
+          }
+        } catch {
+          // ignore; fall back to text/html
+        }
+      }
 
       if (image && !image.isEmpty()) {
         clipboard.write({ text, html: html || undefined, image });
@@ -1314,6 +1488,8 @@ app.on("ready", async () => {
     // ignore
   }
   setupIpc();
+  // Create tray first so the app is still reachable even if the renderer fails to load.
+  createTray();
 
   // Run a retention cleanup at startup in local mode.
   const cfg = readConfig();
@@ -1321,16 +1497,49 @@ app.on("ready", async () => {
     writeLocalDb(cleanupLocalDb(cfg, readLocalDb()));
   }
 
-  await createMainWindow();
-  createTray();
+  await ensureMainWindow();
   setupAutoUpdate();
-  registerGlobalShortcut();
+  const hk = registerGlobalShortcut();
+  if (hk?.ok && hk?.corrected && hk?.hotkey && hk.hotkey !== readConfig().hotkey) {
+    try {
+      writeConfig({ ...readConfig(), hotkey: hk.hotkey });
+    } catch {
+      // ignore
+    }
+  }
+  if (!hk?.ok) {
+    try {
+      await dialog.showMessageBox(mainWindow || undefined, {
+        type: "error",
+        message: "Global hotkey not registered",
+        detail:
+          "Another app may be using the same hotkey.\n\n" +
+          "Click the tray icon to open paste, then Settings -> Hotkey to choose a different one.",
+        buttons: ["OK"],
+        defaultId: 0
+      });
+    } catch {
+      // ignore
+    }
+  } else if (hk?.corrected && hk?.message) {
+    try {
+      await dialog.showMessageBox(mainWindow || undefined, {
+        type: "info",
+        message: "Hotkey changed",
+        detail: hk.message,
+        buttons: ["OK"],
+        defaultId: 0
+      });
+    } catch {
+      // ignore
+    }
+  }
   startClipboardWatcher();
 });
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    void createMainWindow();
+    void ensureMainWindow();
     return;
   }
   if (mainWindow && !mainWindow.isVisible()) {
