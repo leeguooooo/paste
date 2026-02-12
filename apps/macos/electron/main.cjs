@@ -27,6 +27,7 @@ const parsePort = (raw, fallback) => {
 };
 const devPort = parsePort(process.env.PASTE_DEV_PORT ?? process.env.VITE_PORT, 5174);
 const devUrl = `http://127.0.0.1:${devPort}`;
+const trayDebug = process.env.PASTE_TRAY_DEBUG === "1";
 
 const configFile = path.join(app.getPath("userData"), "paste-macos-config.json");
 const localClipsFile = path.join(app.getPath("userData"), "paste-local-clips.json");
@@ -1131,16 +1132,26 @@ const createTray = () => {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip("paste");
+  const trayLabel = trayDebug ? `PASTE_TRAY_DEBUG_${process.pid}` : "paste";
+  tray.setToolTip(trayLabel);
   if (process.platform === "darwin") {
     // If the icon is too subtle or hidden by tinting, a short title guarantees something visible.
     // (Users can still hide it via menu bar manager apps; this just removes "icon is invisible" as a class of bugs.)
-    tray.setTitle("paste");
+    tray.setTitle(trayLabel);
   }
 
   updateTrayMenu();
-  tray.on("click", () => void toggleMainWindow());
+  tray.on("click", async () => {
+    console.log("[tray] click");
+    try {
+      const res = await toggleMainWindow();
+      console.log("[tray] toggle", res);
+    } catch (e) {
+      console.log("[tray] toggle error", e instanceof Error ? e.message : String(e));
+    }
+  });
   tray.on("right-click", () => {
+    console.log("[tray] right-click");
     try {
       tray.popUpContextMenu();
     } catch {
