@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 
 const normalizeSiteUrl = (value: string): string => value.replace(/\/+$/, "");
 
-const siteUrl = normalizeSiteUrl(process.env.PASTE_SITE_URL || "https://paste.misonote.com");
+const siteUrl = normalizeSiteUrl(process.env.PASTE_SITE_URL || "https://paste-web.misonote.com");
 const ogImageUrl = process.env.PASTE_OG_IMAGE_URL || `${siteUrl}/icon-512.svg`;
 const githubUrl = process.env.PASTE_GITHUB_URL || "https://github.com/leeguooooo/paste";
 

@@ -165,7 +165,7 @@ By default `API Base` is empty, so the app is **local-only**.
 
 To enable sync, set `API Base` to one of:
 
-- `https://paste.misonote.com/v1` (same-domain proxy route)
+- `https://paste-web.misonote.com/v1` (same-domain proxy route)
 - `https://pasteapi.misonote.com/v1` (direct Worker domain)
 
 Then keep `User ID` consistent across devices.
