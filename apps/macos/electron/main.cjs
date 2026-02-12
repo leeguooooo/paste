@@ -280,26 +280,32 @@ const toggleMainWindow = () => {
 };
 
 const createMainWindow = async () => {
+  const { screen } = require("electron");
+  const display = screen.getPrimaryDisplay();
+  const { width, height } = display.bounds;
+
   mainWindow = new BrowserWindow({
-    width: 980,
-    height: 420, // Height reduced to look like a bar
-    minWidth: 820,
-    minHeight: 320,
-    title: "paste",
+    width: width,
+    height: height,
+    x: 0,
+    y: 0,
     show: false,
     frame: false,
-    transparent: true, // Keep transparent
-    backgroundColor: "#00000000", // Fully transparent base
+    transparent: true, // Crucial for full-screen overlay
+    backgroundColor: "#00000000",
     hasShadow: false,
     resizable: false,
-    fullscreenable: false,
+    movable: false,
+    fullscreenable: true,
     maximizable: false,
     minimizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
     autoHideMenuBar: true,
+    // Keep vibrancy if you want the bar itself to be blurred, 
+    // but the background dimming will be CSS.
     visualEffectState: "active",
-    vibrancy: "hud", // Premium macOS blur effect
+    vibrancy: "hud", 
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -308,7 +314,8 @@ const createMainWindow = async () => {
     }
   });
 
-  positionPanelWindow();
+  // Remove positionPanelWindow call as we are manually sizing it to full screen
+  // positionPanelWindow();
 
   if (isDev) {
     await safeLoadURL(mainWindow, devUrl);

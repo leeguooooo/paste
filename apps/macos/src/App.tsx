@@ -1,5 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import type { ClipItem } from "@paste/shared";
+import { 
+  Search, 
+  Settings, 
+  Star, 
+  Trash2, 
+  X,
+  Link as LinkIcon,
+  Image as ImageIcon,
+  FileText,
+  Code,
+  ArrowRight,
+  Check
+} from "lucide-react";
 
 type AppConfig = {
   apiBase: string;
@@ -23,287 +36,331 @@ const htmlToText = (html?: string | null): string =>
     .replace(/\s+/g, " ")
     .trim();
 
-const inferTypeLabel = (clip: ClipItem): string => {
-  if (clip.imageDataUrl || clip.type === "image") return "image";
-  if (clip.sourceUrl || clip.type === "link") return "link";
-  if (clip.contentHtml || clip.type === "html") return "html";
-  return clip.type || "text";
-};
-
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [favoriteOnly, setFavoriteOnly] = useState(false);
-  const [newContent, setNewContent] = useState("");
-  const [status, setStatus] = useState("Ready");
+  const [selectedIndex, setSelectedIndex] = useState(0); // For keyboard nav
+  const [showSettings, setShowSettings] = useState(false);
+  
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const filteredLabel = useMemo(() => {
-    if (favoriteOnly && query) return "Favorites + Search";
-    if (favoriteOnly) return "Favorites";
-    if (query) return "Search";
-    return "All";
-  }, [favoriteOnly, query]);
+  // --- Core Data Loading ---
 
-  const loadConfig = async (): Promise<void> => {
+  const loadConfig = async () => {
     try {
       const next = await window.macos.getConfig();
       setConfig(next);
-    } catch (error) {
-      console.error(error);
-      setStatus("Load config failed");
-    }
+    } catch (e) { console.error(e); }
   };
 
-  const loadClips = async (): Promise<void> => {
-    setLoading(true);
+  const loadClips = useCallback(async (isInitial = false) => {
+    if (isInitial) setLoading(true);
     try {
-      const res = await window.macos.listClips({ q: query || undefined, favorite: favoriteOnly });
+      // If query is empty, maybe we show favorites or just recent? 
+      // For now, consistent with Paste, we show all recent.
+      const res = await window.macos.listClips({ q: query || undefined });
       if (res?.ok) {
         setClips(res.data.items ?? []);
-        setStatus(`Loaded ${res.data.items?.length ?? 0} clips`);
-      } else {
-        setStatus(res?.message ?? "Load clips failed");
+        // Reset selection on search change, but keep it if just refreshing
+        if (isInitial) setSelectedIndex(0);
       }
-    } catch (error) {
-      console.error(error);
-      setStatus("Load clips failed");
-    } finally {
-      setLoading(false);
-    }
-  };
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, [query]);
 
+  // Initial Load
   useEffect(() => {
     void loadConfig();
+    void loadClips(true);
   }, []);
 
+  // Debounced Search
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadClips();
-    }, 180);
+    const timer = setTimeout(() => void loadClips(), 150);
     return () => clearTimeout(timer);
-  }, [query, favoriteOnly]);
+  }, [query, loadClips]);
 
-  const saveConfig = async (): Promise<void> => {
-    const res = await window.macos.setConfig(config);
-    if (res.ok) {
-      setStatus("Config saved");
-      await loadClips();
+  // Ensure selection is valid
+  useEffect(() => {
+    if (clips.length > 0 && selectedIndex >= clips.length) {
+      setSelectedIndex(clips.length - 1);
     }
-  };
+  }, [clips.length, selectedIndex]);
 
-  const createClip = async (): Promise<void> => {
-    const content = newContent.trim();
-    if (!content) return;
+  // --- Scroll Synchronization ---
+  useEffect(() => {
+    if (!scrollContainerRef.current || clips.length === 0) return;
+    
+    const container = scrollContainerRef.current;
+    const cardWidth = 260 + 24; // Width + Gap
+    // Center the selected item
+    const targetScroll = (selectedIndex * cardWidth); 
+    
+    container.scrollTo({
+      left: targetScroll,
+      behavior: "smooth"
+    });
+  }, [selectedIndex, clips]);
 
-    const res = await window.macos.createClip({ content, type: "text" });
-    if (res?.ok) {
-      setNewContent("");
-      setStatus("Clip created");
-      await loadClips();
-    } else {
-      setStatus(res?.message ?? "Create clip failed");
-    }
-  };
 
-  const captureNow = async (): Promise<void> => {
-    const res = await window.macos.captureClipboardNow();
-    if (res.ok && res.captured) {
-      setStatus("Captured from clipboard");
-      await loadClips();
-      return;
-    }
-    setStatus(res.reason ?? "Nothing captured");
-  };
+  // --- Actions ---
 
-  const toggleFavorite = async (clip: ClipItem): Promise<void> => {
-    const res = await window.macos.toggleFavorite(clip.id, !clip.isFavorite);
-    if (res?.ok) {
-      await loadClips();
-    }
-  };
-
-  const deleteClip = async (id: string): Promise<void> => {
-    const res = await window.macos.deleteClip(id);
-    if (res?.ok) {
-      await loadClips();
-    }
-  };
-
-  const copyClip = async (clip: ClipItem): Promise<void> => {
+  const handleCopy = async (clip: ClipItem) => {
     const text = clip.content || clip.sourceUrl || "";
-    const res = await window.macos.writeClipboard({
+    await window.macos.writeClipboard({
       text,
       html: clip.contentHtml ?? null,
       imageDataUrl: clip.imageDataUrl ?? null
     });
+    // Hide window after copy
+    await window.macos.toggleWindow();
+  };
+
+  const handleDelete = async (id: string) => {
+    const res = await window.macos.deleteClip(id);
     if (res?.ok) {
-      setStatus(`Copied ${inferTypeLabel(clip)}`);
-    } else {
-      setStatus(res?.message ?? "Copy failed");
+      setClips(prev => prev.filter(c => c.id !== id));
+      if (selectedIndex >= clips.length - 1) {
+        setSelectedIndex(Math.max(0, clips.length - 2));
+      }
     }
   };
 
-  const renderClipBody = (clip: ClipItem) => {
-    if (clip.imageDataUrl) {
+  const handleToggleFavorite = async (clip: ClipItem) => {
+    const res = await window.macos.toggleFavorite(clip.id, !clip.isFavorite);
+    if (res?.ok) {
+      setClips(prev => prev.map(c => c.id === clip.id ? { ...c, isFavorite: !c.isFavorite } : c));
+    }
+  };
+
+  // --- Keyboard Navigation ---
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (showSettings) return; // Let settings handle its own input
+
+      switch (e.key) {
+        case "ArrowRight":
+          e.preventDefault();
+          setSelectedIndex(prev => Math.min(prev + 1, clips.length - 1));
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          setSelectedIndex(prev => Math.max(prev - 1, 0));
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (clips[selectedIndex]) {
+            void handleCopy(clips[selectedIndex]);
+          }
+          break;
+        case "Escape":
+          e.preventDefault();
+          if (query) {
+            setQuery("");
+          } else {
+            void window.macos.toggleWindow();
+          }
+          break;
+        case "Backspace":
+        case "Delete":
+          if (document.activeElement !== searchInputRef.current && clips[selectedIndex]) {
+            e.preventDefault();
+            void handleDelete(clips[selectedIndex].id);
+          }
+          break;
+        case ",":
+          if (e.metaKey) {
+            e.preventDefault();
+            setShowSettings(true);
+          }
+          break;
+        // Search auto-focus: if typing normally and not a nav key, focus input
+        default:
+          if (
+            e.key.length === 1 && 
+            !e.metaKey && 
+            !e.ctrlKey && 
+            !e.altKey && 
+            document.activeElement !== searchInputRef.current
+          ) {
+            searchInputRef.current?.focus();
+          }
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [clips, selectedIndex, showSettings, query]);
+
+
+  // --- Render Helpers ---
+
+  const getIcon = (type: string) => {
+    switch (type) {
+      case 'link': return <LinkIcon size={12} />;
+      case 'image': return <ImageIcon size={12} />;
+      case 'code': return <Code size={12} />;
+      default: return <FileText size={12} />;
+    }
+  };
+
+  const renderPreview = (clip: ClipItem) => {
+    const dataUrl = clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/") ? clip.imageDataUrl : null;
+    if (dataUrl) {
+      return <img src={dataUrl} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />;
+    }
+
+    if (clip.type === "image") {
       return (
-        <div className="clip-preview">
-          <img className="clip-image" src={clip.imageDataUrl} alt={clip.summary || "clip image"} />
-          {clip.content && clip.content !== "[Image]" ? <p className="clip-caption">{clip.content}</p> : null}
+        <div className="clip-image-missing">
+          <ImageIcon size={28} />
+          <div style={{ fontSize: 12 }}>Image (no preview)</div>
         </div>
       );
     }
 
-    if (clip.sourceUrl || clip.type === "link") {
-      return (
-        <div className="clip-preview">
-          <a className="clip-link" href={clip.sourceUrl || clip.content} target="_blank" rel="noreferrer">
-            {clip.sourceUrl || clip.content}
-          </a>
-          {clip.contentHtml ? <p className="clip-rich-text">{htmlToText(clip.contentHtml).slice(0, 240)}</p> : null}
-        </div>
-      );
-    }
+    const text = clip.contentHtml ? htmlToText(clip.contentHtml) : clip.content;
+    return <div className="preview-text">{(text || "").slice(0, 300)}</div>;
+  };
 
-    if (clip.contentHtml) {
-      const plain = htmlToText(clip.contentHtml);
-      return (
-        <div className="clip-preview">
-          <p className="clip-rich-text">{plain || "[HTML]"}</p>
-          <details>
-            <summary>Raw HTML</summary>
-            <pre>{clip.contentHtml}</pre>
-          </details>
-        </div>
-      );
+  const saveConfig = async () => {
+    const res = await window.macos.setConfig(config);
+    if (res.ok) {
+      setShowSettings(false);
+      void loadClips();
     }
-
-    return <pre>{clip.content}</pre>;
   };
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <h1>paste macOS</h1>
-          <p>Paste style workflow: quick capture, search, favorite, quick paste.</p>
-        </div>
-        <button className="ghost" onClick={() => void window.macos.toggleWindow()}>
-          Toggle Window
-        </button>
-      </header>
-
-      <section className="panel settings">
-        <h2>Connection</h2>
-        <label>
-          API Base
-          <input
-            value={config.apiBase}
-            onChange={(event) => setConfig({ ...config, apiBase: event.target.value })}
-          />
-        </label>
-        <label>
-          User ID
-          <input
-            value={config.userId}
-            onChange={(event) => setConfig({ ...config, userId: event.target.value })}
-          />
-        </label>
-        <label>
-          Device ID
-          <input
-            value={config.deviceId}
-            onChange={(event) => setConfig({ ...config, deviceId: event.target.value })}
-          />
-        </label>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={config.autoCapture}
-            onChange={(event) => setConfig({ ...config, autoCapture: event.target.checked })}
-          />
-          Auto capture clipboard changes
-        </label>
-        <button onClick={() => void saveConfig()}>Save Config</button>
-      </section>
-
-      <section className="panel quick-add">
-        <h2>Quick Capture</h2>
-        <div className="row">
-          <textarea
-            placeholder="Paste content here and save as clip..."
-            value={newContent}
-            onChange={(event) => setNewContent(event.target.value)}
-          />
-          <div className="actions">
-            <button onClick={() => void createClip()}>Create Clip</button>
-            <button className="ghost" onClick={() => void captureNow()}>
-              Capture Clipboard Now
-            </button>
-            <button
-              className="ghost"
-              onClick={async () => {
-                const content = await window.macos.readClipboard();
-                setNewContent(content);
-              }}
-            >
-              Read Clipboard
-            </button>
+    <main 
+      className="app-shell" 
+      onClick={async (e) => {
+        if (e.target === e.currentTarget) {
+          await window.macos.toggleWindow();
+        }
+      }}
+    >
+      <div className="history-shelf" onClick={e => e.stopPropagation()}>
+        <div className="toolbar">
+          <div style={{ position: 'relative' }}>
+            <Search 
+              size={18} 
+              style={{ position: 'absolute', left: 14, top: 12, color: 'rgba(255,255,255,0.4)' }} 
+            />
+            <input
+              ref={searchInputRef}
+              className="search-input"
+              placeholder="Type to search..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
+            />
           </div>
         </div>
-      </section>
 
-      <section className="panel">
-        <div className="toolbar">
-          <input
-            placeholder="Search clips..."
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={favoriteOnly}
-              onChange={(event) => setFavoriteOnly(event.target.checked)}
-            />
-            Favorites only
-          </label>
-          <button className="ghost" onClick={() => void loadClips()}>
-            Refresh
-          </button>
+        <div className="history-container" ref={scrollContainerRef}>
+          {clips.map((clip, index) => {
+            const isSelected = index === selectedIndex;
+            return (
+              <div 
+                key={clip.id} 
+                className={`clip-card ${isSelected ? 'selected' : ''}`}
+                data-type={clip.type}
+                onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
+              >
+                <div className={"clip-preview" + (clip.type === "image" ? " is-image" : "")}>
+                  {renderPreview(clip)}
+                </div>
+                
+                <div className="clip-footer">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {getIcon(clip.type)}
+                    <span>{clip.type}</span>
+                  </div>
+                  <span>{new Date(clip.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
+      </div>
+        
+        {/* Empty State spacer or message */}
+        {clips.length === 0 && !loading && (
+          <div style={{ 
+            width: '100%', 
+            textAlign: 'center', 
+            color: '#888', 
+            fontSize: 14,
+            paddingTop: 80 
+          }}>
+            No items found. Copy something or type to search.
+          </div>
+        )}
 
-        <p className="meta">View: {filteredLabel} · {loading ? "Loading..." : `${clips.length} items`}</p>
-
-        <ul className="clip-list">
-          {clips.map((clip) => (
-            <li key={clip.id}>
-              <div className="clip-head">
-                <strong>{clip.summary || "Untitled"}</strong>
-                <span>{inferTypeLabel(clip)}</span>
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
+          <div className="settings-panel" onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontSize: 18 }}>Preferences</h2>
+              <button onClick={() => setShowSettings(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div style={{ display: 'grid', gap: 16 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>API Endpoint</label>
+                <input 
+                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
+                  value={config.apiBase}
+                  onChange={e => setConfig({...config, apiBase: e.target.value})}
+                />
               </div>
-              <div className="clip-subhead">
-                <span>{new Date(clip.createdAt).toLocaleString()}</span>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#666' }}>User ID</label>
+                <input 
+                  style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
+                  value={config.userId}
+                  onChange={e => setConfig({...config, userId: e.target.value})}
+                />
               </div>
-              {renderClipBody(clip)}
-              <div className="clip-actions">
-                <button className="ghost" onClick={() => void copyClip(clip)}>
-                  Copy
-                </button>
-                <button className="ghost" onClick={() => void toggleFavorite(clip)}>
-                  {clip.isFavorite ? "Unfavorite" : "Favorite"}
-                </button>
-                <button className="danger" onClick={() => void deleteClip(clip.id)}>
-                  Delete
-                </button>
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+                  <input 
+                    type="checkbox"
+                    checked={config.autoCapture}
+                    onChange={e => setConfig({...config, autoCapture: e.target.checked})}
+                  />
+                  Auto-capture clipboard history
+                </label>
               </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <footer className="status">{status} · Global shortcut: Cmd/Ctrl + Shift + V</footer>
+              
+              <button 
+                onClick={saveConfig}
+                style={{ 
+                  marginTop: 10, 
+                  background: '#007aff', 
+                  color: 'white', 
+                  border: 'none', 
+                  padding: '10px', 
+                  borderRadius: 8, 
+                  fontWeight: 600,
+                  cursor: 'pointer' 
+                }}
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

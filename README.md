@@ -8,6 +8,12 @@
 - 核心功能对标 Paste（剪贴板历史、搜索、收藏、同步、分类）
 - 已支持结构化内容：`text`/`link`/`html`/`image`（含基础图片 Data URL 存储）
 
+## 当前能力
+
+- Web/PWA: 浏览、搜索、标签、收藏、同步
+- API: `text`/`link`/`html`/`image`（图片当前以 Data URL 方式存 D1，约 1_500_000 字符上限；大附件后续迁移 R2）
+- macOS: Electron 托盘常驻，无主窗口；底部 Quick Paste 面板（搜索、方向键选择、回车复制并自动隐藏）
+
 ## 仓库结构
 
 ```txt
