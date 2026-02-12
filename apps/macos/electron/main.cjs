@@ -33,6 +33,7 @@ const defaultConfig = {
   userId: "mac_user_demo",
   deviceId: "macos_desktop",
   autoCapture: true,
+  launchAtLogin: false,
   // Paste-like options: 30d / 180d / 365d / forever
   // Favorites are kept even when expiring.
   retention: "180d"
@@ -530,6 +531,12 @@ const setupIpc = () => {
     if (!isRemoteEnabled(merged)) {
       writeLocalDb(cleanupLocalDb(merged, readLocalDb()));
     }
+    try {
+      app.setLoginItemSettings({ openAtLogin: Boolean(merged.launchAtLogin) });
+    } catch {
+      // ignore
+    }
+
     return { ok: true };
   });
 
@@ -659,6 +666,11 @@ app.on("ready", async () => {
   }
 
   app.setName("paste");
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(readConfig().launchAtLogin) });
+  } catch {
+    // ignore
+  }
   setupIpc();
 
   // Run a retention cleanup at startup in local mode.

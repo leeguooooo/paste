@@ -19,6 +19,7 @@ type AppConfig = {
   userId: string;
   deviceId: string;
   autoCapture: boolean;
+  launchAtLogin: boolean;
   retention: "30d" | "180d" | "365d" | "forever";
 };
 
@@ -27,6 +28,7 @@ const emptyConfig: AppConfig = {
   userId: "mac_user_demo",
   deviceId: "macos_desktop",
   autoCapture: true,
+  launchAtLogin: false,
   retention: "180d"
 };
 
@@ -249,6 +251,13 @@ export default function App() {
     >
       <div className="history-shelf" onClick={e => e.stopPropagation()}>
         <div className="toolbar">
+          <button
+            className="settings-button"
+            onClick={() => setShowSettings(true)}
+            title="Preferences (Cmd+,)"
+          >
+            <Settings size={18} />
+          </button>
           <div style={{ position: 'relative' }}>
             <Search 
               size={18} 
@@ -380,6 +389,17 @@ export default function App() {
                 </select>
                 <div style={{ marginTop: 6, fontSize: 12, color: '#888' }}>
                   Favorites are kept when expiring.
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={config.launchAtLogin}
+                    onChange={e => setConfig({ ...config, launchAtLogin: e.target.checked })}
+                  />
+                  Launch at login
+                </label>
+              </div>
+
                 </div>
               </div>
 

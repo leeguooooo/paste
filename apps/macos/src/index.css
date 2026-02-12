@@ -184,3 +184,24 @@ body {
   color: rgba(255, 255, 255, 0.7);
   background: rgba(255, 255, 255, 0.04);
 }
+
+.settings-button {
+  position: absolute;
+  right: 18px;
+  top: -54px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(40, 40, 40, 0.8);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+}
+
+.settings-button:hover {
+  color: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.22);
+}

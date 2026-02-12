@@ -8,6 +8,7 @@ declare global {
         userId: string;
         deviceId: string;
         autoCapture: boolean;
+        launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
       }>;
       setConfig: (next: {
@@ -15,6 +16,7 @@ declare global {
         userId: string;
         deviceId: string;
         autoCapture: boolean;
+        launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
       }) => Promise<{ ok: boolean }>;
       listClips: (query?: { q?: string; favorite?: boolean }) => Promise<any>;
