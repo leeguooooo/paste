@@ -95,7 +95,20 @@ export default function App() {
   }, [selectedIndex, clips]);
 
   const handleCopy = async (clip: ClipItem) => {
-    await navigator.clipboard.writeText(clip.content);
+    try {
+      if (clip.type === "image" && clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/")) {
+        // Best-effort image copy (may fail due to browser permission model).
+        const blob = await (await fetch(String(clip.imageDataUrl))).blob();
+        const ClipboardItemCtor = (window as any).ClipboardItem as any;
+        if (!ClipboardItemCtor) throw new Error("ClipboardItem not supported");
+        await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
+      } else {
+        await navigator.clipboard.writeText(clip.content);
+      }
+    } catch {
+      await navigator.clipboard.writeText(clip.content);
+    }
+
     // Visual feedback on the card
     const originalClips = [...clips];
     setClips(clips.map((c, i) => i === selectedIndex ? { ...c, summary: "✓ Copied!" } : c));
@@ -161,7 +174,11 @@ export default function App() {
                 onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
               >
                 <div className="clip-preview">
-                  <div className="preview-text">{clip.content}</div>
+                  {clip.type === "image" && clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/") ? (
+                    <img src={clip.imageDataUrl} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />
+                  ) : (
+                    <div className="preview-text">{clip.content}</div>
+                  )}
                 </div>
                 <div className="clip-footer">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

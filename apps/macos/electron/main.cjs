@@ -229,6 +229,59 @@ const hasMeaningfulHtml = (html, text) => {
   );
 };
 
+
+const buildBestImageDataUrl = (img) => {
+  try {
+    const pngUrl = img.toDataURL();
+    if (pngUrl.length <= MAX_IMAGE_DATA_URL_LENGTH) {
+      return { ok: true, dataUrl: pngUrl };
+    }
+
+    const baseSize = img.getSize();
+    const maxSide = Math.max(baseSize.width || 0, baseSize.height || 0);
+    const targetMaxSides = [1920, 1440, 1080, 720, 512];
+    const jpegQualities = [80, 70, 60, 50, 40, 30];
+
+    for (const target of targetMaxSides) {
+      let candidate = img;
+      if (maxSide > target) {
+        const resizeOptions = {
+          width: baseSize.width >= baseSize.height ? target : undefined,
+          height: baseSize.height > baseSize.width ? target : undefined,
+          quality: "good"
+        };
+        candidate = img.resize(resizeOptions);
+      }
+
+      for (const q of jpegQualities) {
+        let buf;
+        try {
+          buf = candidate.toJPEG(q);
+        } catch {
+          buf = null;
+        }
+        if (!buf || buf.length === 0) {
+          continue;
+        }
+        const jpegUrl = `data:image/jpeg;base64,${buf.toString("base64")}`;
+        if (jpegUrl.length <= MAX_IMAGE_DATA_URL_LENGTH) {
+          return { ok: true, dataUrl: jpegUrl };
+        }
+      }
+    }
+
+    return {
+      ok: false,
+      reason: `Image too large (${pngUrl.length} chars). Enable R2 to sync full-size images (planned).`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : "image encode failed"
+    };
+  }
+};
+
 const buildClipboardPayload = () => {
   const text = clipboard.readText().trim();
   const html = clipboard.readHTML().trim();
@@ -237,12 +290,12 @@ const buildClipboardPayload = () => {
   const richHtml = hasMeaningfulHtml(html, text) ? html : null;
 
   if (hasImage) {
-    const dataUrl = image.toDataURL();
-    if (dataUrl.length > MAX_IMAGE_DATA_URL_LENGTH) {
+    const best = buildBestImageDataUrl(image);
+    if (!best.ok) {
       return {
         ok: false,
         captured: false,
-        reason: `Image too large (${dataUrl.length} chars)`
+        reason: best.reason || "Image too large"
       };
     }
 
@@ -256,7 +309,7 @@ const buildClipboardPayload = () => {
         summary: text ? text.slice(0, 120) : "Image",
         contentHtml: richHtml,
         sourceUrl,
-        imageDataUrl: dataUrl,
+        imageDataUrl: best.dataUrl,
         clientUpdatedAt: Date.now()
       }
     };
