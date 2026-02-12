@@ -1,6 +1,6 @@
 {
-  "name": "paste-lite",
-  "short_name": "paste-lite",
+  "name": "paste",
+  "short_name": "paste",
   "description": "Paste-like clipboard manager on Cloudflare",
   "start_url": "/",
   "display": "standalone",

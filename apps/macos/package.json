@@ -1,0 +1,31 @@
+{
+  "name": "@paste/macos",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on -t 60000 http://127.0.0.1:5174/ && electron .",
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paste/shared": "0.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "electron": "^37.2.3",
+    "typescript": "^5.8.2",
+    "vite": "^7.1.0",
+    "wait-on": "^8.0.5"
+  }
+}

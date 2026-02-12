@@ -31,7 +31,11 @@ import {
 } from "lucide-react";
 import type { ClipItem, ClipListResponse, ApiResponse } from "@paste/shared";
 
-const API_BASE = "/v1";
+const API_BASE =
+  import.meta.env.VITE_API_BASE ??
+  (window.location.hostname === "paste.misonote.com"
+    ? "https://pasteapi.misonote.com/v1"
+    : "/v1");
 
 // Simple ID storage for demo purposes
 const USER_ID = localStorage.getItem("paste_user_id") || "user_demo";
@@ -227,7 +231,7 @@ const App: React.FC = () => {
         <Container>
           <Navbar.Brand href="#" className="fw-bold d-flex align-items-center">
             <Clipboard className="me-2 text-primary" />
-            paste-lite
+            paste
           </Navbar.Brand>
           <div className="d-flex align-items-center ms-auto">
             <Button 

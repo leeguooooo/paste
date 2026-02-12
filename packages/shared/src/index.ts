@@ -1,4 +1,4 @@
-export type ClipType = "text" | "link" | "code" | "image";
+export type ClipType = "text" | "link" | "code" | "html" | "image";
 
 export interface ClipItem {
   id: string;
@@ -7,6 +7,9 @@ export interface ClipItem {
   type: ClipType;
   summary: string;
   content: string;
+  contentHtml?: string | null;
+  sourceUrl?: string | null;
+  imageDataUrl?: string | null;
   isFavorite: boolean;
   isDeleted: boolean;
   tags: string[];

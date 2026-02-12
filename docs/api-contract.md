@@ -1,6 +1,6 @@
 # API Contract (No Auth Phase)
 
-基地址：`/v1`  
+基地址：`/v1`
 公共请求头（除 `/health` 外都需要）：
 
 - `x-user-id: <string>`
@@ -14,7 +14,7 @@
 
 - `GET /v1/clips`
   - Query:
-    - `q` 关键字搜索（summary/content）
+    - `q` 关键字搜索（`summary`/`content`/`contentHtml`/`sourceUrl`）
     - `tag` 标签名过滤
     - `favorite=1` 仅收藏
     - `includeDeleted=1` 包含软删除
@@ -23,9 +23,12 @@
 - `POST /v1/clips`
   - Body:
     - `id?: string`
-    - `type?: "text" | "link" | "code" | "image"`
+    - `type?: "text" | "link" | "code" | "html" | "image"`
     - `summary?: string`
     - `content?: string`
+    - `contentHtml?: string | null`
+    - `sourceUrl?: string | null`（仅接受 `http/https`）
+    - `imageDataUrl?: string | null`（当前 D1 存储模式限制约 1_500_000 字符）
     - `isFavorite?: boolean`
     - `isDeleted?: boolean`
     - `tags?: string[]`

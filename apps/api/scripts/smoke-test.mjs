@@ -189,6 +189,65 @@ const run = async () => {
     assert(createTwo?.ok === true, "create clip two failed");
     const clipTwo = createTwo.data;
 
+    const linkUrl = `https://example.com/smoke/${userId}`;
+    const createLink = await requestApi({
+      path: "/v1/clips",
+      method: "POST",
+      userId,
+      deviceId: deviceA,
+      expectedStatus: 201,
+      body: {
+        type: "link",
+        content: linkUrl,
+        sourceUrl: linkUrl,
+        tags: ["work"],
+        clientUpdatedAt: now - 800
+      }
+    });
+    assert(createLink?.ok === true, "create link clip failed");
+    const linkClip = createLink.data;
+    assert(linkClip.type === "link", "link clip type mismatch");
+    assert(linkClip.sourceUrl === linkUrl, "link clip sourceUrl mismatch");
+
+    const htmlPayload = `<div><b>smoke-html-rich</b><i> rich html text </i></div>`;
+    const createHtml = await requestApi({
+      path: "/v1/clips",
+      method: "POST",
+      userId,
+      deviceId: deviceA,
+      expectedStatus: 201,
+      body: {
+        type: "html",
+        content: "smoke html",
+        contentHtml: htmlPayload,
+        clientUpdatedAt: now - 700
+      }
+    });
+    assert(createHtml?.ok === true, "create html clip failed");
+    const htmlClip = createHtml.data;
+    assert(htmlClip.type === "html", "html clip type mismatch");
+    assert(htmlClip.contentHtml && htmlClip.contentHtml.includes("smoke-html-rich"), "html content missing");
+
+    const tinyImageDataUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+0XkAAAAASUVORK5CYII=";
+    const createImage = await requestApi({
+      path: "/v1/clips",
+      method: "POST",
+      userId,
+      deviceId: deviceA,
+      expectedStatus: 201,
+      body: {
+        type: "image",
+        content: "tiny-image",
+        imageDataUrl: tinyImageDataUrl,
+        clientUpdatedAt: now - 600
+      }
+    });
+    assert(createImage?.ok === true, "create image clip failed");
+    const imageClip = createImage.data;
+    assert(imageClip.type === "image", "image clip type mismatch");
+    assert(imageClip.imageDataUrl === tinyImageDataUrl, "image clip data mismatch");
+
     const search = await requestApi({
       path: "/v1/clips?q=alpha-content",
       userId,
@@ -198,6 +257,28 @@ const run = async () => {
     assert(
       search.data.items.some((item) => item.id === clipOne.id),
       "search result does not contain clip one"
+    );
+
+    const searchLink = await requestApi({
+      path: `/v1/clips?q=${encodeURIComponent(`example.com/smoke/${userId}`)}`,
+      userId,
+      deviceId: deviceA
+    });
+    assert(searchLink?.ok === true, "search by source url failed");
+    assert(
+      searchLink.data.items.some((item) => item.id === linkClip.id),
+      "search by source url does not contain link clip"
+    );
+
+    const searchHtml = await requestApi({
+      path: "/v1/clips?q=smoke-html-rich",
+      userId,
+      deviceId: deviceA
+    });
+    assert(searchHtml?.ok === true, "search by html failed");
+    assert(
+      searchHtml.data.items.some((item) => item.id === htmlClip.id),
+      "search by html does not contain html clip"
     );
 
     const patchTwo = await requestApi({
@@ -244,6 +325,9 @@ const run = async () => {
     assert(syncPull?.ok === true, "sync pull failed");
     const pulledClipTwo = syncPull.data.changes.find((item) => item.id === clipTwo.id);
     assert(pulledClipTwo, "sync pull did not contain clip two");
+
+    const pulledImage = syncPull.data.changes.find((item) => item.id === imageClip.id);
+    assert(pulledImage?.imageDataUrl, "sync pull did not contain image data");
 
     const conflictPush = await requestApi({
       path: "/v1/sync/push",

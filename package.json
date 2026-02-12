@@ -1,5 +1,5 @@
 {
-  "name": "paste-lite",
+  "name": "paste",
   "private": true,
   "version": "0.1.0",
   "workspaces": [
@@ -12,7 +12,9 @@
     "typecheck": "npm run -ws typecheck",
     "test:api:smoke": "npm --workspace @paste/api run test:smoke",
     "deploy:api": "npm --workspace @paste/api run deploy",
-    "deploy:web": "npm --workspace @paste/web run deploy"
+    "deploy:web": "npm --workspace @paste/web run pages:deploy",
+    "dev:macos": "npm --workspace @paste/macos run dev",
+    "build:macos": "npm --workspace @paste/macos run build"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260204.0",

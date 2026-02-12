@@ -1,9 +1,12 @@
 name = "paste-api"
 main = "src/index.ts"
 compatibility_date = "2026-02-12"
+routes = [
+  { pattern = "pasteapi.misonote.com", custom_domain = true }
+]
 
 [vars]
-APP_NAME = "paste-lite"
+APP_NAME = "paste"
 API_VERSION = "v1"
 
 [[d1_databases]]

@@ -1,4 +1,4 @@
-# paste-lite
+# paste
 
 一个基于 Cloudflare 的 Paste 替代方案，目标是：
 
@@ -6,13 +6,15 @@
 - Web 优先，同时支持“可安装应用”（PWA）
 - 后续新增 iOS 客户端（复用同一套 API 与数据模型）
 - 核心功能对标 Paste（剪贴板历史、搜索、收藏、同步、分类）
+- 已支持结构化内容：`text`/`link`/`html`/`image`（含基础图片 Data URL 存储）
 
 ## 仓库结构
 
 ```txt
 apps/
   api/          # Cloudflare Worker API
-  web/          # Cloudflare Pages 前端（占位，前端将由 Gemini 承接）
+  web/          # Cloudflare Pages 前端
+  macos/        # Electron macOS 桌面端（Paste 风格）
 packages/
   shared/       # 跨端共享类型/协议
 docs/
@@ -57,6 +59,7 @@ id = "<your-kv-namespace-id>"
 npm install
 npm run dev:api
 npm run dev:web
+npm run dev:macos
 ```
 
 运行 API 自动化冒烟测试：
@@ -99,7 +102,7 @@ curl -X POST http://127.0.0.1:8787/v1/clips \
   -H 'x-device-id: mac_01' \
   -d '{
     "type":"text",
-    "content":"hello paste-lite",
+    "content":"hello paste",
     "tags":["work","snippet"],
     "isFavorite":true
   }'
@@ -118,3 +121,4 @@ npm run deploy:web
 - 分阶段 TODO: `docs/todo-roadmap.md`
 - API 契约: `docs/api-contract.md`
 - 前端对接: `docs/frontend-handoff.md`
+- macOS 路线图: `docs/macos-roadmap.md`

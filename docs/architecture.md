@@ -14,7 +14,7 @@ Web(Pages/PWA)      iOS(App)
                      |                   |
                   D1 (metadata)       KV (cache/index)
                      |
-                   R2 (payload/blob)
+                   R2 (payload/blob, next)
 ```
 
 ## 3. 职责拆分
@@ -22,17 +22,21 @@ Web(Pages/PWA)      iOS(App)
 - `apps/web`
   - 前端 UI、PWA 安装能力、离线读取最近内容
   - 与 `apps/api` 通信
+- `apps/macos`
+  - Electron 托盘应用（无主窗口常驻）
+  - 剪贴板监听、手动抓取、快速搜索与复制
 - `apps/api`
   - 条目 CRUD、搜索、标签、收藏、同步策略
   - 无登录阶段通过 `x-user-id`、`x-device-id` 标识身份
-  - 与 D1/R2/KV 交互
+  - 与 D1/KV 交互
 - `packages/shared`
   - API DTO、错误码、客户端协议版本
 
-## 4. 核心数据模型（第一版）
+## 4. 核心数据模型（当前）
 
 - `clips`
   - `id`, `user_id`, `device_id`, `type`, `summary`, `content`
+  - `content_html`, `source_url`, `image_data_url`
   - `is_favorite`, `is_deleted`
   - `client_updated_at`, `server_updated_at`, `created_at`
 - `tags`
@@ -41,8 +45,9 @@ Web(Pages/PWA)      iOS(App)
   - `user_id`, `clip_id`, `tag_id`
 
 说明：
-- 目前小文本直存 D1；后续大文本/附件迁移 R2。
-- 常用列表（最近 100 条）可写入 KV 做读缓存。
+- 目前文本/HTML/链接/小图片（Data URL）直存 D1。
+- 大附件后续迁移到 R2，D1 只保存索引与元数据。
+- 常用列表（最近 50 条）可写入 KV 做读缓存。
 
 ## 5. API 分层
 

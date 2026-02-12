@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "pages:dev": "wrangler pages dev ./dist",
     "pages:deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web"
   },
   "dependencies": {
     "@paste/shared": "0.1.0",

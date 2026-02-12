@@ -1,6 +1,6 @@
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open("paste-lite-v1").then((cache) =>
+    caches.open("paste-v1").then((cache) =>
       cache.addAll(["/", "/index.html", "/manifest.webmanifest"])
     )
   );

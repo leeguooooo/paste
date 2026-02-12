@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b1623" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <title>paste-lite</title>
+    <title>paste</title>
     <style>
       :root {
         color-scheme: light;
@@ -63,7 +63,7 @@
   <body>
     <main>
       <section class="card">
-        <h1>paste-lite</h1>
+        <h1>paste</h1>
         <p>Cloudflare Pages + Workers 架构已完成初始化。</p>
         <p>前端界面将由 Gemini 实现，当前页面用于验证部署与 PWA 安装链路。</p>
         <p>健康检查：<code>GET /v1/health</code></p>

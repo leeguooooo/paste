@@ -1,0 +1,278 @@
+:root {
+  --bg: linear-gradient(180deg, #f4f8ff 0%, #f8fbff 100%);
+  --card: #ffffff;
+  --text: #1f2a37;
+  --sub: #6b7280;
+  --line: #e5e7eb;
+  --brand: #1776d2;
+  --danger: #d92d20;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.app-shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 16px 18px;
+  backdrop-filter: blur(16px);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+
+.topbar p {
+  margin: 4px 0 0;
+  color: var(--sub);
+  font-size: 13px;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sub);
+}
+
+.settings {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+label {
+  font-size: 12px;
+  color: var(--sub);
+  display: grid;
+  gap: 4px;
+}
+
+input,
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+}
+
+textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.quick-add,
+.panel:last-of-type {
+  grid-column: 2 / 3;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 160px;
+  gap: 12px;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+}
+
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+button.ghost {
+  background: #eff6ff;
+  color: #1f2a37;
+}
+
+button.danger {
+  background: #fee4e2;
+  color: var(--danger);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.meta {
+  margin: 10px 0;
+  color: var(--sub);
+  font-size: 12px;
+}
+
+.clip-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.clip-list li {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fbfdff;
+}
+
+.clip-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.clip-head span {
+  color: var(--brand);
+  background: #eaf3ff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.clip-subhead {
+  margin-top: 4px;
+  color: var(--sub);
+  font-size: 12px;
+}
+
+.clip-preview {
+  margin: 8px 0;
+}
+
+.clip-image {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.clip-caption {
+  margin: 8px 0 0;
+  color: var(--sub);
+  font-size: 12px;
+}
+
+.clip-link {
+  color: #0f4d92;
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.clip-link:hover {
+  text-decoration: underline;
+}
+
+.clip-rich-text {
+  white-space: pre-wrap;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #334155;
+}
+
+pre {
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: auto;
+  margin: 8px 0;
+  font-size: 12px;
+  background: #f5f7fb;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--sub);
+  font-size: 12px;
+}
+
+.clip-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.status {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--sub);
+  text-align: right;
+  padding: 4px 6px;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-add,
+  .panel:last-of-type {
+    grid-column: 1;
+  }
+
+  .row {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+}

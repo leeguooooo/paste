@@ -14,6 +14,9 @@ type ClipRecord = {
   type: ClipType;
   summary: string;
   content: string;
+  contentHtml: string | null;
+  sourceUrl: string | null;
+  imageDataUrl: string | null;
   isFavorite: boolean;
   isDeleted: boolean;
   tags: string[];
@@ -29,6 +32,9 @@ type ClipRow = {
   type: ClipType;
   summary: string;
   content: string;
+  content_html: string | null;
+  source_url: string | null;
+  image_data_url: string | null;
   is_favorite: number;
   is_deleted: number;
   client_updated_at: number;
@@ -47,6 +53,9 @@ type SyncIncomingChange = {
   type?: ClipType;
   summary?: string;
   content?: string;
+  contentHtml?: string | null;
+  sourceUrl?: string | null;
+  imageDataUrl?: string | null;
   isFavorite?: boolean;
   isDeleted?: boolean;
   tags?: string[];
@@ -63,6 +72,7 @@ const MAX_SYNC_LIMIT = 300;
 const DEFAULT_LIST_LIMIT = 50;
 const DEFAULT_SYNC_LIMIT = 100;
 const RECENT_CLIPS_CACHE_TTL_SECONDS = 20;
+const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
 
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
@@ -70,7 +80,7 @@ const CORS_HEADERS = {
   "access-control-allow-headers": "content-type, x-user-id, x-device-id"
 };
 
-const CLIP_TYPES = new Set<ClipType>(["text", "link", "code", "image"]);
+const CLIP_TYPES = new Set<ClipType>(["text", "link", "code", "html", "image"]);
 
 const json = <T>(data: ApiResponse<T>, status = 200): Response =>
   new Response(JSON.stringify(data), {
@@ -124,9 +134,78 @@ const normalizeTagName = (name: string): string => name.trim().replace(/\s+/g, "
 
 const normalizeTagKey = (name: string): string => normalizeTagName(name).toLowerCase();
 
-const buildSummary = (content: string, summary?: string): string => {
-  const normalized = summary?.trim() || content.trim().slice(0, 120);
-  return normalized || "Untitled";
+const isProbablyUrl = (value: string): boolean => /^https?:\/\/\S+$/i.test(value.trim());
+
+const extractUrlFromHtml = (value: string): string | null => {
+  const match = value.match(/href\s*=\s*['"]([^'"]+)['"]/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  return isProbablyUrl(match[1]) ? match[1] : null;
+};
+
+const inferClipType = (
+  incoming: SyncIncomingChange,
+  existing?: ClipRow | null
+): ClipType => {
+  if (incoming.type && CLIP_TYPES.has(incoming.type)) {
+    return incoming.type;
+  }
+  if (incoming.imageDataUrl || existing?.image_data_url) {
+    return "image";
+  }
+  if (incoming.contentHtml || existing?.content_html) {
+    const content = incoming.content ?? existing?.content ?? "";
+    const sourceUrl = incoming.sourceUrl ?? existing?.source_url;
+    if (sourceUrl || isProbablyUrl(content) || extractUrlFromHtml(incoming.contentHtml ?? "")) {
+      return "link";
+    }
+    return "html";
+  }
+  const content = incoming.content ?? existing?.content ?? "";
+  const sourceUrl = incoming.sourceUrl ?? existing?.source_url;
+  if (sourceUrl || isProbablyUrl(content)) {
+    return "link";
+  }
+  return (existing?.type as ClipType | undefined) ?? "text";
+};
+
+const buildSummary = (
+  content: string,
+  summary: string | undefined,
+  type: ClipType,
+  sourceUrl?: string | null,
+  html?: string | null
+): string => {
+  const explicit = summary?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  if (type === "link") {
+    if (sourceUrl?.trim()) {
+      return sourceUrl.trim().slice(0, 120);
+    }
+    if (isProbablyUrl(content)) {
+      return content.trim().slice(0, 120);
+    }
+  }
+
+  if (type === "image") {
+    return "Image";
+  }
+
+  const fromText = content.trim();
+  if (fromText) {
+    return fromText.slice(0, 120);
+  }
+
+  const fromHtml = (html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  if (fromHtml) {
+    return fromHtml.slice(0, 120);
+  }
+
+  return "Untitled";
 };
 
 const parseLimit = (raw: string | null, fallback: number, max: number): number => {
@@ -163,6 +242,37 @@ const intToBool = (value: number): boolean => value === 1;
 
 const isValidTimestamp = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+const coalesceNullable = (incoming: string | null | undefined, current: string | null): string | null => {
+  if (incoming === undefined) {
+    return current;
+  }
+  if (incoming === null) {
+    return null;
+  }
+  const trimmed = incoming.trim();
+  return trimmed ? trimmed : null;
+};
+
+const validateRichFields = (incoming: {
+  imageDataUrl?: string | null;
+  contentHtml?: string | null;
+  sourceUrl?: string | null;
+}): Response | null => {
+  if (incoming.imageDataUrl && incoming.imageDataUrl.length > MAX_IMAGE_DATA_URL_LENGTH) {
+    return fail(
+      "IMAGE_TOO_LARGE",
+      `imageDataUrl is too large (max ${MAX_IMAGE_DATA_URL_LENGTH} chars for current D1 storage mode)`,
+      400
+    );
+  }
+
+  if (incoming.sourceUrl && !isProbablyUrl(incoming.sourceUrl)) {
+    return fail("INVALID_SOURCE_URL", "sourceUrl must be a valid http/https URL", 400);
+  }
+
+  return null;
+};
 
 const recentClipsCacheKey = (userId: string): string => `clips:recent:${userId}`;
 
@@ -231,8 +341,8 @@ const fetchClipById = async (
   (
     await db
       .prepare(
-        `SELECT id, user_id, device_id, type, summary, content, is_favorite, is_deleted,
-                client_updated_at, server_updated_at, created_at
+        `SELECT id, user_id, device_id, type, summary, content, content_html, source_url, image_data_url,
+                is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
          FROM clips
          WHERE user_id = ?1 AND id = ?2`
       )
@@ -283,6 +393,9 @@ const rowToClip = (row: ClipRow, tags: string[]): ClipRecord => ({
   type: row.type,
   summary: row.summary,
   content: row.content,
+  contentHtml: row.content_html,
+  sourceUrl: row.source_url,
+  imageDataUrl: row.image_data_url,
   isFavorite: intToBool(row.is_favorite),
   isDeleted: intToBool(row.is_deleted),
   tags,
@@ -407,13 +520,36 @@ const applyClipChange = async (
     return { status: "conflict", clip: current };
   }
 
-  const type: ClipType = change.type ?? existing?.type ?? "text";
+  const type = inferClipType(change, existing);
   if (!CLIP_TYPES.has(type)) {
     throw new Error("Unsupported clip type.");
   }
 
-  const content = change.content ?? existing?.content ?? "";
-  const summary = buildSummary(content, change.summary ?? existing?.summary);
+  let content = (change.content ?? existing?.content ?? "").trim();
+  let contentHtml = coalesceNullable(change.contentHtml, existing?.content_html ?? null);
+  let sourceUrl = coalesceNullable(change.sourceUrl, existing?.source_url ?? null);
+  const imageDataUrl = coalesceNullable(change.imageDataUrl, existing?.image_data_url ?? null);
+
+  if (!sourceUrl && isProbablyUrl(content)) {
+    sourceUrl = content;
+  }
+  if (!sourceUrl && contentHtml) {
+    sourceUrl = extractUrlFromHtml(contentHtml);
+  }
+
+  if (type === "image" && !content) {
+    content = "[Image]";
+  }
+  if (type === "link" && !content && sourceUrl) {
+    content = sourceUrl;
+  }
+
+  const validationError = validateRichFields({ imageDataUrl, contentHtml, sourceUrl });
+  if (validationError) {
+    throw new Error(await validationError.text());
+  }
+
+  const summary = buildSummary(content, change.summary ?? existing?.summary, type, sourceUrl, contentHtml);
   const isFavorite = change.isFavorite ?? intToBool(existing?.is_favorite ?? 0);
   const isDeleted = change.isDeleted ?? intToBool(existing?.is_deleted ?? 0);
   const createdAt = existing?.created_at ?? now;
@@ -422,9 +558,9 @@ const applyClipChange = async (
     await db
       .prepare(
         `INSERT INTO clips (
-          id, user_id, device_id, type, summary, content, is_favorite, is_deleted,
-          client_updated_at, server_updated_at, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+          id, user_id, device_id, type, summary, content, content_html, source_url, image_data_url,
+          is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`
       )
       .bind(
         clipId,
@@ -433,6 +569,9 @@ const applyClipChange = async (
         type,
         summary,
         content,
+        contentHtml,
+        sourceUrl,
+        imageDataUrl,
         boolToInt(isFavorite),
         boolToInt(isDeleted),
         incomingClientUpdatedAt,
@@ -444,8 +583,9 @@ const applyClipChange = async (
     await db
       .prepare(
         `UPDATE clips
-         SET device_id = ?3, type = ?4, summary = ?5, content = ?6, is_favorite = ?7, is_deleted = ?8,
-             client_updated_at = ?9, server_updated_at = ?10
+         SET device_id = ?3, type = ?4, summary = ?5, content = ?6, content_html = ?7, source_url = ?8,
+             image_data_url = ?9, is_favorite = ?10, is_deleted = ?11,
+             client_updated_at = ?12, server_updated_at = ?13
          WHERE user_id = ?1 AND id = ?2`
       )
       .bind(
@@ -455,6 +595,9 @@ const applyClipChange = async (
         type,
         summary,
         content,
+        contentHtml,
+        sourceUrl,
+        imageDataUrl,
         boolToInt(isFavorite),
         boolToInt(isDeleted),
         incomingClientUpdatedAt,
@@ -513,10 +656,13 @@ const handleListClips = async (
 
   if (q) {
     where.push(
-      `(LOWER(c.summary) LIKE ?${bindIndex} OR LOWER(c.content) LIKE ?${bindIndex + 1})`
+      `(LOWER(COALESCE(c.summary, '')) LIKE ?${bindIndex} OR
+        LOWER(COALESCE(c.content, '')) LIKE ?${bindIndex + 1} OR
+        LOWER(COALESCE(c.content_html, '')) LIKE ?${bindIndex + 2} OR
+        LOWER(COALESCE(c.source_url, '')) LIKE ?${bindIndex + 3})`
     );
-    binds.push(`%${q}%`, `%${q}%`);
-    bindIndex += 2;
+    binds.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    bindIndex += 4;
   }
 
   if (tag) {
@@ -544,7 +690,8 @@ const handleListClips = async (
   }
 
   const sql = `
-    SELECT c.id, c.user_id, c.device_id, c.type, c.summary, c.content, c.is_favorite, c.is_deleted,
+    SELECT c.id, c.user_id, c.device_id, c.type, c.summary, c.content, c.content_html, c.source_url,
+           c.image_data_url, c.is_favorite, c.is_deleted,
            c.client_updated_at, c.server_updated_at, c.created_at
     FROM clips c
     WHERE ${where.join(" AND ")}
@@ -594,6 +741,9 @@ const handleCreateClip = async (
     type?: ClipType;
     summary?: string;
     content?: string;
+    contentHtml?: string | null;
+    sourceUrl?: string | null;
+    imageDataUrl?: string | null;
     isFavorite?: boolean;
     isDeleted?: boolean;
     tags?: string[];
@@ -604,19 +754,30 @@ const handleCreateClip = async (
     return parsed;
   }
 
-  const type = parsed.type ?? "text";
-  if (!CLIP_TYPES.has(type)) {
-    return fail("INVALID_CLIP_TYPE", "type must be one of text/link/code/image", 400);
+  if (parsed.type && !CLIP_TYPES.has(parsed.type)) {
+    return fail("INVALID_CLIP_TYPE", "type must be one of text/link/code/html/image", 400);
   }
   if (parsed.clientUpdatedAt !== undefined && !isValidTimestamp(parsed.clientUpdatedAt)) {
     return fail("INVALID_CLIENT_UPDATED_AT", "clientUpdatedAt must be a non-negative number", 400);
   }
 
+  const richValidation = validateRichFields({
+    contentHtml: parsed.contentHtml,
+    sourceUrl: parsed.sourceUrl,
+    imageDataUrl: parsed.imageDataUrl
+  });
+  if (richValidation) {
+    return richValidation;
+  }
+
   const change: SyncIncomingChange = {
     id: parsed.id ?? crypto.randomUUID(),
-    type,
+    type: parsed.type,
     summary: parsed.summary,
     content: parsed.content ?? "",
+    contentHtml: parsed.contentHtml,
+    sourceUrl: parsed.sourceUrl,
+    imageDataUrl: parsed.imageDataUrl,
     isFavorite: parsed.isFavorite ?? false,
     isDeleted: parsed.isDeleted ?? false,
     tags: parsed.tags ?? [],
@@ -639,6 +800,9 @@ const handlePatchClip = async (
     type?: ClipType;
     summary?: string;
     content?: string;
+    contentHtml?: string | null;
+    sourceUrl?: string | null;
+    imageDataUrl?: string | null;
     isFavorite?: boolean;
     isDeleted?: boolean;
     tags?: string[];
@@ -651,10 +815,19 @@ const handlePatchClip = async (
   }
 
   if (parsed.type && !CLIP_TYPES.has(parsed.type)) {
-    return fail("INVALID_CLIP_TYPE", "type must be one of text/link/code/image", 400);
+    return fail("INVALID_CLIP_TYPE", "type must be one of text/link/code/html/image", 400);
   }
   if (parsed.clientUpdatedAt !== undefined && !isValidTimestamp(parsed.clientUpdatedAt)) {
     return fail("INVALID_CLIENT_UPDATED_AT", "clientUpdatedAt must be a non-negative number", 400);
+  }
+
+  const richValidation = validateRichFields({
+    contentHtml: parsed.contentHtml,
+    sourceUrl: parsed.sourceUrl,
+    imageDataUrl: parsed.imageDataUrl
+  });
+  if (richValidation) {
+    return richValidation;
   }
 
   const existing = await fetchClipById(db, identity.userId, clipId);
@@ -671,6 +844,9 @@ const handlePatchClip = async (
       type: parsed.type,
       summary: parsed.summary,
       content: parsed.content,
+      contentHtml: parsed.contentHtml,
+      sourceUrl: parsed.sourceUrl,
+      imageDataUrl: parsed.imageDataUrl,
       isFavorite: parsed.isFavorite,
       isDeleted: parsed.isDeleted,
       tags: parsed.tags,
@@ -856,8 +1032,8 @@ const handleSyncPull = async (
 
   const rows = await db
     .prepare(
-      `SELECT id, user_id, device_id, type, summary, content, is_favorite, is_deleted,
-              client_updated_at, server_updated_at, created_at
+      `SELECT id, user_id, device_id, type, summary, content, content_html, source_url, image_data_url,
+              is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
        FROM clips
        WHERE user_id = ?1 AND server_updated_at > ?2
        ORDER BY server_updated_at ASC, id ASC
@@ -914,11 +1090,20 @@ const handleSyncPush = async (
     }
 
     if (change.type && !CLIP_TYPES.has(change.type)) {
-      return fail("INVALID_CLIP_TYPE", "type must be one of text/link/code/image", 400);
+      return fail("INVALID_CLIP_TYPE", "type must be one of text/link/code/html/image", 400);
     }
 
     if (change.clientUpdatedAt !== undefined && !isValidTimestamp(change.clientUpdatedAt)) {
       return fail("INVALID_CLIENT_UPDATED_AT", "clientUpdatedAt must be a non-negative number", 400);
+    }
+
+    const richValidation = validateRichFields({
+      contentHtml: change.contentHtml,
+      sourceUrl: change.sourceUrl,
+      imageDataUrl: change.imageDataUrl
+    });
+    if (richValidation) {
+      return richValidation;
     }
 
     const result = await applyClipChange(db, identity, change, identity.deviceId);
