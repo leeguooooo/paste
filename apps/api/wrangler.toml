@@ -2,7 +2,9 @@ name = "paste-api"
 main = "src/index.ts"
 compatibility_date = "2026-02-12"
 routes = [
-  { pattern = "pasteapi.misonote.com", custom_domain = true }
+  { pattern = "pasteapi.misonote.com", custom_domain = true },
+  # Allow the Pages frontend (paste.misonote.com) to call the API via same-origin `/v1/*`.
+  { pattern = "paste.misonote.com/v1/*", zone_name = "misonote.com" }
 ]
 
 [vars]
