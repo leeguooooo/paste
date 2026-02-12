@@ -37,6 +37,7 @@ let lastClipboardProbeFingerprint = "";
 let lastClipboardFailure = { fingerprint: "", at: 0 };
 let captureClipboardInFlight = null;
 let captureClipboardInFlightProbe = "";
+let recentClipboardFingerprints = new Map(); // fingerprint -> lastSeenAt (ms)
 let registeredHotkey = null;
 let hotkeyStatus = { ok: true, hotkey: null, corrected: false, message: null };
 let lastTargetApp = { name: "", bundleId: "", at: 0 };
@@ -102,6 +103,20 @@ const getFrontmostApp = () => {
   }
 };
 
+const getFrontmostAppAsync = async () => {
+  try {
+    // Faster than resolving "id of application frontAppName" in many setups.
+    const out = await runAppleScript([
+      'tell application "System Events" to set p to first application process whose frontmost is true',
+      'return (name of p) & "\t" & (bundle identifier of p)'
+    ]);
+    const [name = "", bundleId = ""] = String(out).split("\t");
+    return { name, bundleId };
+  } catch {
+    return { name: "", bundleId: "" };
+  }
+};
+
 const waitForFrontmostApp = async ({ name, bundleId, timeoutMs = 1500 }) => {
   const start = Date.now();
   for (;;) {
@@ -114,16 +129,25 @@ const waitForFrontmostApp = async ({ name, bundleId, timeoutMs = 1500 }) => {
   }
 };
 
-const tryCaptureFrontmostAppTarget = () => {
-  // Capture the app that was frontmost before showing our overlay. We use this later to
-  // reactivate it so Cmd+V goes back to the original input field.
-  try {
-    const { name, bundleId } = getFrontmostApp();
-    if (!name || !bundleId) return;
-    if (String(name).toLowerCase() === String(app.getName() || "").toLowerCase()) return;
-    lastTargetApp = { name, bundleId, at: Date.now() };
-  } catch {
-    // ignore
+const waitForFrontmostNonSelfAppAsync = async ({ timeoutMs = 1500 } = {}) => {
+  const selfName = String(app.getName() || "").toLowerCase();
+  const start = Date.now();
+  let last = { name: "", bundleId: "" };
+
+  for (;;) {
+    const cur = await getFrontmostAppAsync();
+    last = cur;
+    const curName = String(cur?.name || "").toLowerCase();
+
+    // If our overlay is hidden, the frontmost app should switch back to the target app.
+    if (cur?.name && curName && curName !== selfName) {
+      return cur;
+    }
+
+    if (Date.now() - start >= timeoutMs) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60));
   }
 };
 
@@ -227,6 +251,22 @@ const cleanupLocalDb = (cfg, db) => {
   const ms = retentionMsFromConfig(cfg);
   let clips = Array.isArray(db?.clips) ? db.clips : [];
 
+  // Collapse consecutive duplicates (newest-first) to avoid self-capture loops and
+  // noisy histories. We only de-dupe adjacent items so that "A, B, A" remains.
+  const DUPLICATE_COLLAPSE_WINDOW_MS = 60_000;
+  const dedupeKey = (c) => {
+    if (!c) return "";
+    const type = (c.type || "").toString();
+    const content = (c.content || "").toString().trim().slice(0, 200);
+    const sourceUrl = (c.sourceUrl || "").toString().trim();
+    const html = (c.contentHtml || "").toString().trim().slice(0, 200);
+    const img =
+      typeof c.imageDataUrl === "string" && c.imageDataUrl
+        ? `${c.imageDataUrl.slice(0, 64)}:${c.imageDataUrl.length}`
+        : "";
+    return [type, content, sourceUrl, html, img].join("|");
+  };
+
   if (ms !== null) {
     const cutoff = now - ms;
     clips = clips.filter((c) => c && (c.isFavorite || (c.createdAt ?? 0) >= cutoff));
@@ -242,6 +282,36 @@ const cleanupLocalDb = (cfg, db) => {
   }
 
   clips.sort((a, b) => (b?.createdAt ?? 0) - (a?.createdAt ?? 0));
+
+  // De-dupe after sorting so consecutive equals can be collapsed.
+  const collapsed = [];
+  for (const clip of clips) {
+    const prev = collapsed.length ? collapsed[collapsed.length - 1] : null;
+    if (!prev) {
+      collapsed.push(clip);
+      continue;
+    }
+    const prevKey = dedupeKey(prev);
+    const clipKey = dedupeKey(clip);
+    const prevAt = prev?.createdAt ?? prev?.serverUpdatedAt ?? 0;
+    const clipAt = clip?.createdAt ?? clip?.serverUpdatedAt ?? 0;
+    const closeEnough =
+      Number.isFinite(prevAt) &&
+      Number.isFinite(clipAt) &&
+      Math.abs(prevAt - clipAt) <= DUPLICATE_COLLAPSE_WINDOW_MS;
+    if (prevKey && prevKey === clipKey && closeEnough) {
+      // Preserve "favorite" and merge tags.
+      const prevTags = Array.isArray(prev.tags) ? prev.tags : [];
+      const nextTags = Array.isArray(clip.tags) ? clip.tags : [];
+      const mergedTags = Array.from(new Set(prevTags.concat(nextTags)));
+      prev.isFavorite = Boolean(prev.isFavorite || clip.isFavorite);
+      prev.tags = mergedTags;
+      continue;
+    }
+    collapsed.push(clip);
+  }
+
+  clips = collapsed;
   return { clips };
 };
 
@@ -326,7 +396,9 @@ const localDeleteClip = (cfg, id) => {
 const isProbablyUrl = (value) => /^https?:\/\/\S+$/i.test((value || "").trim());
 
 const extractUrlFromHtml = (value) => {
-  const match = (value || "").match(/href\s*=\s*['"]([^'"]+)['"]/i);
+  // Only treat actual anchor tags as link sources; other tags may contain href
+  // attributes (e.g. <link ...>) which should not make the clip a URL.
+  const match = (value || "").match(/<a\b[^>]*\bhref\s*=\s*['"]([^'"]+)['"]/i);
   if (!match?.[1]) {
     return null;
   }
@@ -504,7 +576,9 @@ const buildClipboardPayload = () => {
       payload: {
         type: sourceUrl ? "link" : "html",
         content: plain || "[HTML]",
-        summary: (plain || sourceUrl || "HTML").slice(0, 120),
+        // For link clips where the visible text isn't the URL, show the URL in
+        // the preview so the "LINK" type isn't confusing.
+        summary: (sourceUrl || plain || "HTML").slice(0, 120),
         contentHtml: richHtml,
         sourceUrl,
         imageDataUrl: null,
@@ -544,6 +618,43 @@ const payloadFingerprint = (payload) =>
     payload.contentHtml ? payload.contentHtml.slice(0, 160) : "",
     payload.imageDataUrl ? `image:${payload.imageDataUrl.length}` : ""
   ].join("|");
+
+const syncClipboardFingerprintsFromSystemClipboard = () => {
+  // Keep both probe + payload fingerprints aligned with the real clipboard, so
+  // the watcher doesn't re-capture content we just wrote ourselves.
+  try {
+    lastClipboardProbeFingerprint = probeClipboardFingerprint();
+  } catch {
+    // ignore
+  }
+  try {
+    const built = buildClipboardPayload();
+    if (built && built.ok && built.captured && built.payload) {
+      lastClipboardFingerprint = payloadFingerprint(built.payload);
+    }
+  } catch {
+    // ignore
+  }
+};
+
+const seenClipboardFingerprintRecently = (fingerprint, now, windowMs) => {
+  if (!fingerprint) return false;
+
+  // Prune on read to keep the map small.
+  for (const [k, at] of recentClipboardFingerprints.entries()) {
+    if (!at || now - at > windowMs) {
+      recentClipboardFingerprints.delete(k);
+    }
+  }
+
+  const prev = recentClipboardFingerprints.get(fingerprint) || 0;
+  if (prev && now - prev <= windowMs) {
+    recentClipboardFingerprints.set(fingerprint, now);
+    return true;
+  }
+  recentClipboardFingerprints.set(fingerprint, now);
+  return false;
+};
 
 const hashPrefix = (buf) => {
   try {
@@ -686,6 +797,15 @@ const captureClipboardNow = async (source = "manual") => {
     }
 
     const fingerprint = payloadFingerprint(built.payload);
+    // Prevent A,B,A loops from generating duplicates when the clipboard alternates
+    // between values (common when copying/pasting quickly).
+    if (source === "watcher") {
+      const DUP_WINDOW_MS = 60_000;
+      if (seenClipboardFingerprintRecently(fingerprint, Date.now(), DUP_WINDOW_MS)) {
+        if (probe) lastClipboardProbeFingerprint = probe;
+        return { ok: true, captured: false, reason: "duplicated" };
+      }
+    }
     if (fingerprint === lastClipboardFingerprint && source !== "manual") {
       if (probe) lastClipboardProbeFingerprint = probe;
       return { ok: true, captured: false, reason: "duplicated" };
@@ -771,8 +891,6 @@ const toggleMainWindow = async () => {
     return { visible: false };
   }
 
-  // Record the app currently receiving input before we take focus.
-  tryCaptureFrontmostAppTarget();
   win.show();
   win.focus();
   return { visible: true };
@@ -781,7 +899,6 @@ const toggleMainWindow = async () => {
 const showSettings = async () => {
   const win = await ensureMainWindow();
   if (!win) return;
-  tryCaptureFrontmostAppTarget();
   win.show();
   win.focus();
   broadcastToWindows("ui:open-settings", { at: Date.now() });
@@ -1316,16 +1433,7 @@ const setupIpc = () => {
         clipboard.writeText(text || "");
       }
 
-      lastClipboardFingerprint = [
-        text.slice(0, 160),
-        html ? html.slice(0, 80) : "",
-        imageDataUrl ? `img:${imageDataUrl.length}` : ""
-      ].join("|");
-      lastClipboardProbeFingerprint = [
-        text.slice(0, 160),
-        html ? html.slice(0, 80) : "",
-        imageDataUrl ? `img:${imageDataUrl.length}` : ""
-      ].join("|");
+      syncClipboardFingerprintsFromSystemClipboard();
 
       return { ok: true };
     } catch (error) {
@@ -1391,39 +1499,31 @@ const setupIpc = () => {
         clipboard.writeText(text || "");
       }
 
-      // 更新指纹避免重复抓取
-      lastClipboardFingerprint = [text.slice(0, 160), html ? html.slice(0, 80) : "", imageDataUrl ? `img:${imageDataUrl.length}` : ""].join("|");
+      // Update fingerprints to avoid the watcher re-capturing what we just wrote.
+      syncClipboardFingerprintsFromSystemClipboard();
 
       // 2. 隐藏窗口
       if (mainWindow) {
         mainWindow.hide();
       }
 
-      // 3. 切回原来前台应用，再模拟 Cmd+V
+      // 3. 切回前台应用，再模拟 Cmd+V
       if (process.platform === "darwin") {
-        const targetBundleId = lastTargetApp?.bundleId || "";
-        const targetName = lastTargetApp?.name || "";
-        const targetCapturedAt = lastTargetApp?.at || 0;
+        // After hiding our always-on-top overlay, macOS should restore focus to the original app.
+        // Resolve that app here instead of doing synchronous osascript work on the hotkey path.
+        await new Promise((resolve) => setTimeout(resolve, 40));
 
-        if (!targetBundleId && !targetName) {
-          // Still try to paste to whatever is frontmost after hiding, but include diagnostics.
-          try {
-            await runAppleScript(['tell application "System Events" to keystroke "v" using {command down}']);
-            return {
-              ok: true,
-              message: "pasted without target app (no target captured)"
-            };
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : "paste failed";
-            return {
-              ok: false,
-              message:
-                `paste failed: ${msg}\n\n` +
-                `No target app was captured before opening the overlay.\n` +
-                `If this keeps happening, enable Accessibility for "${app.getName()}" in System Settings -> Privacy & Security -> Accessibility.`
-            };
-          }
+        const resolved = await waitForFrontmostNonSelfAppAsync({ timeoutMs: 1500 });
+        if (resolved?.name || resolved?.bundleId) {
+          lastTargetApp = { name: resolved?.name || "", bundleId: resolved?.bundleId || "", at: Date.now() };
         }
+        const fallback = lastTargetApp || { name: "", bundleId: "", at: 0 };
+        const targetName = resolved?.name || fallback.name || "";
+        const targetBundleId = resolved?.bundleId || fallback.bundleId || "";
+        const targetCapturedAt = fallback?.at || 0;
+
+        const hasTarget = Boolean(targetName || targetBundleId);
+
         if (targetBundleId) {
           try {
             await runAppleScript([`tell application id "${targetBundleId}" to activate`]);
@@ -1432,8 +1532,10 @@ const setupIpc = () => {
           }
         }
 
-        // Wait until the original app is truly frontmost; fixed sleeps are flaky.
-        const frontOk = await waitForFrontmostApp({ name: targetName, bundleId: targetBundleId, timeoutMs: 1500 });
+        // Wait until the target app is truly frontmost; fixed sleeps are flaky.
+        const frontOk = hasTarget
+          ? await waitForFrontmostApp({ name: targetName, bundleId: targetBundleId, timeoutMs: 1500 })
+          : true;
         try {
           if (targetName) {
             const safeName = String(targetName).replace(/\"/g, "\\\"");
@@ -1468,6 +1570,30 @@ const setupIpc = () => {
   });
 
   ipcMain.handle("window:toggle", async () => toggleMainWindow());
+
+  ipcMain.handle("window:capture", async () => {
+    try {
+      if (!mainWindow) {
+        return { ok: false, message: "window not ready" };
+      }
+
+      const img = await mainWindow.capturePage();
+      if (!img || img.isEmpty()) {
+        return { ok: false, message: "capture returned empty image" };
+      }
+
+      // Settings backdrop doesn't need full-resolution; downscale reduces decode cost.
+      const size = img.getSize();
+      const maxWidth = 1600;
+      const targetWidth = Math.max(1, Math.min(size.width, maxWidth));
+      const targetHeight = Math.max(1, Math.round((size.height * targetWidth) / Math.max(1, size.width)));
+      const resized = targetWidth === size.width ? img : img.resize({ width: targetWidth, height: targetHeight });
+
+      return { ok: true, dataUrl: resized.toDataURL() };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "capture failed" };
+    }
+  });
 
   ipcMain.handle("clipboard:capture-now", async () => captureClipboardNow("manual"));
 };

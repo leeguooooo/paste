@@ -44,6 +44,7 @@ declare global {
       ) => Promise<{ ok: boolean; message?: string }>;
       captureClipboardNow: () => Promise<{ ok: boolean; captured: boolean; reason?: string }>;
       toggleWindow: () => Promise<{ visible: boolean }>;
+      captureWindow: () => Promise<{ ok: boolean; dataUrl?: string; message?: string }>;
       onOpenSettings: (cb: (payload: { at?: number } | undefined) => void) => () => void;
       onClipsChanged: (cb: (payload: { source?: string; at?: number } | undefined) => void) => () => void;
       onWindowShown: (cb: (payload: { at?: number } | undefined) => void) => () => void;

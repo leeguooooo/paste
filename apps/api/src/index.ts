@@ -185,7 +185,9 @@ const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
 };
 
 const extractUrlFromHtml = (value: string): string | null => {
-  const match = value.match(/href\s*=\s*['"]([^'"]+)['"]/i);
+  // Only treat actual anchor tags as link sources; other tags may contain href
+  // attributes (e.g. <link ...>) which should not make the clip a URL.
+  const match = value.match(/<a\b[^>]*\bhref\s*=\s*['"]([^'"]+)['"]/i);
   if (!match?.[1]) {
     return null;
   }

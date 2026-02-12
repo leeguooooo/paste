@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import type { ClipItem } from "@paste/shared";
+import type { ClipItem, ClipType } from "@paste/shared";
 import { 
   Search, 
   Settings, 
@@ -17,6 +17,8 @@ import {
   Monitor,
   Smartphone
 } from "lucide-react";
+
+type ClipCardItem = ClipItem & { __demo?: boolean };
 
 type AppConfig = {
   apiBase: string;
@@ -55,6 +57,255 @@ const getPreviewDataUrl = (clip: ClipItem): string | null => {
   return null;
 };
 
+const getTypeAccent = (type: ClipType): string => {
+  switch (type) {
+    case "link": return "var(--accent-blue)";
+    case "text": return "var(--accent-orange)";
+    case "code": return "var(--accent-purple)";
+    case "html": return "var(--accent-green)";
+    case "image": return "var(--accent-pink)";
+    default: return "var(--accent-gray)";
+  }
+};
+
+const formatAgeShort = (createdAtMs: number): string => {
+  const now = Date.now();
+  const delta = Math.max(0, now - createdAtMs);
+  if (delta < 60_000) return `${Math.max(1, Math.floor(delta / 1000))}s`;
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
+  return `${Math.floor(delta / 86_400_000)}d`;
+};
+
+const normalizeHttpUrl = (raw: string): string => {
+  const s = String(raw || "").trim();
+  if (!/^https?:\/\//i.test(s)) return s;
+  try {
+    const u = new URL(s);
+    u.hash = "";
+    u.hostname = u.hostname.toLowerCase();
+    u.protocol = u.protocol.toLowerCase();
+    if ((u.protocol === "http:" && u.port === "80") || (u.protocol === "https:" && u.port === "443")) {
+      u.port = "";
+    }
+    return u.toString();
+  } catch {
+    return s;
+  }
+};
+
+const imageKeyFromClip = (c: ClipItem): string => {
+  const url = typeof c.imageUrl === "string" ? c.imageUrl.trim() : "";
+  if (url) {
+    try {
+      const u = new URL(url, window.location.origin);
+      const h = u.searchParams.get("h");
+      if (h) return `sha256:${h}`;
+    } catch {
+      // ignore
+    }
+  }
+
+  const raw =
+    (typeof c.imagePreviewDataUrl === "string" && c.imagePreviewDataUrl) ||
+    (typeof c.imageDataUrl === "string" && c.imageDataUrl) ||
+    "";
+  if (!raw) return "";
+  return `data:${raw.slice(0, 64)}:${raw.length}`;
+};
+
+const dedupeRecentItems = (items: ClipItem[]): ClipItem[] => {
+  // Keep the newest occurrence; always keep favorites.
+  // Use a time window to avoid deleting legitimate repeats far apart.
+  const DEDUPE_WINDOW_MS = 10 * 60_000;
+  const firstSeenAtByKey = new Map<string, number>();
+  const out: ClipItem[] = [];
+
+  const keyOf = (c: ClipItem): string => {
+    const content = String(c.content || "").trim();
+    const sourceUrl = String(c.sourceUrl || "").trim();
+
+    if (
+      c.type === "link" ||
+      /^https?:\/\//i.test(content) ||
+      /^https?:\/\//i.test(sourceUrl)
+    ) {
+      const url = normalizeHttpUrl(sourceUrl || content);
+      return url ? `link:${url}` : "";
+    }
+
+    if (c.type === "image") {
+      const imgKey = imageKeyFromClip(c);
+      return imgKey ? `image:${imgKey}` : "";
+    }
+
+    // text/code/html: de-dupe by trimmed content (and html when present).
+    const html = String(c.contentHtml || "").trim();
+    const normText = content.replace(/\s+/g, " ").slice(0, 500);
+    const normHtml = html ? html.replace(/\s+/g, " ").slice(0, 500) : "";
+    if (!normText && !normHtml) return "";
+    return `${c.type}:${normText}:${normHtml}`;
+  };
+
+  for (const c of items) {
+    if (c.isFavorite) {
+      out.push(c);
+      continue;
+    }
+
+    const key = keyOf(c);
+    if (!key) {
+      out.push(c);
+      continue;
+    }
+
+    const at = Number.isFinite(c.createdAt) ? c.createdAt : 0;
+    const seenAt = firstSeenAtByKey.get(key);
+    if (seenAt !== undefined && Math.abs(seenAt - at) <= DEDUPE_WINDOW_MS) {
+      continue;
+    }
+    firstSeenAtByKey.set(key, at);
+    out.push(c);
+  }
+
+  return out;
+};
+
+const collapseConsecutiveDuplicates = (items: ClipItem[]): ClipItem[] => {
+  // List results are newest-first. Collapse accidental duplicate runs created by
+  // watcher/self-capture loops.
+  const WINDOW_MS = 60_000;
+  const keyOf = (c: ClipItem): string => {
+    const content = (c.content || "").trim().slice(0, 200);
+    const html = (c.contentHtml || "").trim().slice(0, 200);
+    const src = (c.sourceUrl || "").trim();
+    const imgRaw =
+      (typeof c.imageUrl === "string" && c.imageUrl.trim()) ||
+      (typeof c.imagePreviewDataUrl === "string" && c.imagePreviewDataUrl) ||
+      (typeof c.imageDataUrl === "string" && c.imageDataUrl) ||
+      "";
+    const img = imgRaw ? `${imgRaw.slice(0, 64)}:${imgRaw.length}` : "";
+    return [c.type, content, src, html, img].join("|");
+  };
+
+  const out: ClipItem[] = [];
+  let run: ClipItem[] = [];
+  let runKey = "";
+
+  const flush = () => {
+    if (run.length === 0) return;
+    const pick = run.find((c) => c.isFavorite) || run[0];
+    out.push(pick);
+    run = [];
+    runKey = "";
+  };
+
+  for (const item of items) {
+    const k = keyOf(item);
+    if (run.length === 0) {
+      run = [item];
+      runKey = k;
+      continue;
+    }
+    const prev = run[0];
+    const closeEnough = Math.abs((prev.createdAt ?? 0) - (item.createdAt ?? 0)) <= WINDOW_MS;
+    if (k && k === runKey && closeEnough) {
+      run.push(item);
+      continue;
+    }
+    flush();
+    run = [item];
+    runKey = k;
+  }
+  flush();
+  return out;
+};
+
+const DEMO_SVG_DATA_URL =
+  "data:image/svg+xml;base64," +
+  btoa(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#007aff"/>
+          <stop offset="1" stop-color="#af52de"/>
+        </linearGradient>
+      </defs>
+      <rect width="360" height="240" rx="28" fill="#0b0b0b"/>
+      <rect x="18" y="18" width="324" height="204" rx="22" fill="url(#g)" opacity="0.35"/>
+      <rect x="34" y="38" width="292" height="40" rx="14" fill="rgba(255,255,255,0.14)"/>
+      <rect x="34" y="92" width="220" height="16" rx="8" fill="rgba(255,255,255,0.20)"/>
+      <rect x="34" y="118" width="260" height="16" rx="8" fill="rgba(255,255,255,0.16)"/>
+      <rect x="34" y="144" width="190" height="16" rx="8" fill="rgba(255,255,255,0.12)"/>
+      <text x="44" y="64" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto" font-size="16" fill="rgba(255,255,255,0.92)" font-weight="700">Paste Demo</text>
+    </svg>`
+  );
+
+const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
+  const now = Date.now();
+  const base = {
+    userId,
+    deviceId,
+    isFavorite: false,
+    isDeleted: false,
+    tags: [],
+    clientUpdatedAt: now,
+    serverUpdatedAt: now,
+  };
+
+  return [
+    {
+      ...base,
+      __demo: true,
+      id: "demo:text",
+      type: "text",
+      summary: "欢迎使用 Paste",
+      content: "欢迎使用 Paste。点击任意卡片可复制示例内容。",
+      createdAt: now - 9_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:link",
+      type: "link",
+      summary: "链接示例",
+      content: "https://github.com/leeguooooo/paste",
+      sourceUrl: "https://github.com/leeguooooo/paste",
+      createdAt: now - 32_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:code",
+      type: "code",
+      summary: "代码片段",
+      content: "curl -sS https://pasteapi.misonote.com/v1/health",
+      createdAt: now - 56_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:html",
+      type: "html",
+      summary: "HTML 示例",
+      content: "<strong>Paste</strong> is local-first.",
+      contentHtml: "<strong>Paste</strong> is local-first.",
+      createdAt: now - 120_000,
+    },
+    {
+      ...base,
+      __demo: true,
+      id: "demo:image",
+      type: "image",
+      summary: "图片示例",
+      content: "Paste demo image",
+      imagePreviewDataUrl: DEMO_SVG_DATA_URL,
+      imageDataUrl: DEMO_SVG_DATA_URL,
+      createdAt: now - 240_000,
+    },
+  ];
+};
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [clips, setClips] = useState<ClipItem[]>([]);
@@ -62,11 +313,15 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsBackdropDataUrl, setSettingsBackdropDataUrl] = useState<string | null>(null);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const windowVisibleRef = useRef(false);
   const refreshTimerRef = useRef<number | null>(null);
+  const selectionReasonRef = useRef<"keyboard" | "hover" | "click" | "other">("other");
+  const hoverRafRef = useRef<number | null>(null);
+  const hoverPendingIndexRef = useRef<number | null>(null);
 
   const previewTextById = useMemo(() => {
     const map = new Map<string, string>();
@@ -90,8 +345,11 @@ export default function App() {
     try {
       const res = await window.macos.listClips({ q: query || undefined });
       if (res?.ok) {
-        setClips(res.data.items ?? []);
-        if (isInitial) setSelectedIndex(0);
+        const nextItems = dedupeRecentItems(collapseConsecutiveDuplicates(res.data.items ?? []));
+        setClips(nextItems);
+        setSelectedIndex((prev) =>
+          isInitial ? 0 : Math.min(prev, Math.max(0, nextItems.length - 1))
+        );
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -104,7 +362,7 @@ export default function App() {
 
   useEffect(() => {
     const off = window.macos.onOpenSettings?.(() => {
-      setShowSettings(true);
+      void openSettings();
     });
     return () => {
       try {
@@ -159,8 +417,33 @@ export default function App() {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
       }
+      if (hoverRafRef.current) {
+        window.cancelAnimationFrame(hoverRafRef.current);
+        hoverRafRef.current = null;
+      }
     };
   }, [loadClips, query, showSettings]);
+
+  const openSettings = useCallback(async () => {
+    if (showSettings) return;
+    setSettingsBackdropDataUrl(null);
+
+    try {
+      const res = await window.macos.captureWindow();
+      if (res?.ok && typeof res.dataUrl === "string" && res.dataUrl.startsWith("data:image/")) {
+        setSettingsBackdropDataUrl(res.dataUrl);
+      }
+    } catch {
+      // ignore; settings will still open (without frozen backdrop)
+    } finally {
+      setShowSettings(true);
+    }
+  }, [showSettings]);
+
+  const closeSettings = useCallback(() => {
+    setShowSettings(false);
+    setSettingsBackdropDataUrl(null);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadClips(), 150);
@@ -221,20 +504,20 @@ export default function App() {
     if (cardRightPos > viewRight - padding) {
       container.scrollTo({
         left: cardRightPos - containerWidth + padding,
-        behavior: "smooth"
+        behavior: selectionReasonRef.current === "hover" ? "auto" : "smooth"
       });
     } 
     // 如果卡片超出了左边界
     else if (cardLeftPos < viewLeft + padding) {
       container.scrollTo({
         left: cardLeftPos - padding,
-        behavior: "smooth"
+        behavior: selectionReasonRef.current === "hover" ? "auto" : "smooth"
       });
     }
   }, [selectedIndex, clips.length]);
 
-  const handleCopy = async (clip: ClipItem) => {
-    let effective = clip;
+	  const handleCopy = async (clip: ClipItem) => {
+	    let effective = clip;
     if (
       clip.type === "image" &&
       !isValidImageDataUrl(clip.imageDataUrl) &&
@@ -251,16 +534,35 @@ export default function App() {
       }
     }
 
-    const text = effective.content || effective.sourceUrl || "";
-    const res = await window.macos.pasteAndHide({
-      text,
-      html: effective.contentHtml ?? null,
-      imageDataUrl: effective.imageDataUrl ?? null,
-      imageUrl: effective.imageUrl ?? null
+	    // For link clips, use the URL as the plain-text fallback so pasting into
+	    // non-rich-text fields still produces a usable link.
+	    const text =
+	      effective.type === "link" && typeof effective.sourceUrl === "string" && effective.sourceUrl.trim()
+	        ? effective.sourceUrl.trim()
+	        : (effective.content || effective.sourceUrl || "");
+	    const res = await window.macos.pasteAndHide({
+	      text,
+	      html: effective.contentHtml ?? null,
+	      imageDataUrl: effective.imageDataUrl ?? null,
+	      imageUrl: effective.imageUrl ?? null
     });
     if (!res?.ok) {
       // Surface the root error (most commonly missing Accessibility permission).
       alert(res?.message || "Paste failed");
+    }
+  };
+
+  const handleCopyDemo = async (clip: ClipCardItem) => {
+    // For the empty state demo cards, don't hide the window or paste into another app.
+    // Just copy into the system clipboard so the user can try Cmd+V anywhere.
+    const value =
+      clip.type === "image"
+        ? { text: clip.content, imageDataUrl: clip.imageDataUrl ?? clip.imagePreviewDataUrl ?? null }
+        : { text: clip.content, html: clip.contentHtml ?? null };
+
+    const res = await window.macos.writeClipboard(value);
+    if (!res?.ok) {
+      alert(res?.message || "Copy failed");
     }
   };
 
@@ -287,10 +589,12 @@ export default function App() {
       switch (e.key) {
         case "ArrowRight":
           e.preventDefault();
+          selectionReasonRef.current = "keyboard";
           setSelectedIndex(prev => Math.min(prev + 1, clips.length - 1));
           break;
         case "ArrowLeft":
           e.preventDefault();
+          selectionReasonRef.current = "keyboard";
           setSelectedIndex(prev => Math.max(prev - 1, 0));
           break;
         case "Enter":
@@ -317,7 +621,7 @@ export default function App() {
         case ",":
           if (e.metaKey) {
             e.preventDefault();
-            setShowSettings(true);
+            void openSettings();
           }
           break;
         default:
@@ -335,7 +639,19 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clips, selectedIndex, showSettings, query]);
+  }, [clips, selectedIndex, showSettings, query, openSettings]);
+
+  const setSelectedIndexFromHover = useCallback((index: number) => {
+    selectionReasonRef.current = "hover";
+    hoverPendingIndexRef.current = index;
+    if (hoverRafRef.current != null) return;
+    hoverRafRef.current = window.requestAnimationFrame(() => {
+      hoverRafRef.current = null;
+      const nextIndex = hoverPendingIndexRef.current;
+      if (nextIndex == null) return;
+      setSelectedIndex((prev) => (prev === nextIndex ? prev : nextIndex));
+    });
+  }, []);
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -378,6 +694,9 @@ export default function App() {
     return <div className="preview-text">{previewTextById.get(clip.id) ?? ""}</div>;
   };
 
+  const showDemo = !loading && clips.length === 0 && query.trim() === "";
+  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(config.userId, config.deviceId) : clips;
+
   const saveConfig = async () => {
     const res = await window.macos.setConfig(config);
     if (res.ok) {
@@ -394,7 +713,7 @@ export default function App() {
 
   return (
     <main 
-      className={`app-shell ${clips.length > 0 ? 'active' : ''}`} 
+      className={`app-shell ${clips.length > 0 ? 'active' : ''} ${showSettings ? 'settings-open' : ''}`} 
       onClick={async (e) => {
         if (e.target === e.currentTarget) {
           await window.macos.toggleWindow();
@@ -421,7 +740,7 @@ export default function App() {
             </div>
             <button 
               className="icon-btn" 
-              onClick={() => setShowSettings(true)}
+              onClick={() => void openSettings()}
               style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
               title="Settings (Cmd+,)"
             >
@@ -431,34 +750,62 @@ export default function App() {
         </div>
 
         <div className="history-container" ref={scrollContainerRef}>
-          {clips.map((clip, index) => {
+          {visibleClips.map((clip, index) => {
             const isSelected = index === selectedIndex;
             const device = getDeviceMeta(clip.deviceId);
+            const accent = getTypeAccent(clip.type);
+            const age = formatAgeShort(clip.createdAt);
+            const cardStyle = { ["--accent" as any]: accent } as React.CSSProperties;
             return (
               <div 
                 key={clip.id} 
                 className={`clip-card ${isSelected ? 'selected' : ''}`}
                 data-type={clip.type}
-                onMouseEnter={() => setSelectedIndex((prev) => (prev === index ? prev : index))}
-                onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
+                style={cardStyle}
+                onMouseEnter={() => {
+                  setSelectedIndexFromHover(index);
+                }}
+                onClick={() => {
+                  selectionReasonRef.current = "click";
+                  setSelectedIndex(index);
+                  if (clip.__demo) {
+                    void handleCopyDemo(clip);
+                    return;
+                  }
+                  void handleCopy(clip);
+                }}
               >
+                <div className="clip-head">
+                  <div className="clip-head-left">
+                    <span className="clip-type-pill">{clip.type}</span>
+                    <span className="clip-age">{age}</span>
+                  </div>
+                  {!clip.__demo && (
+                    <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
+                        aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
+                        onClick={(e) => { e.stopPropagation(); void handleToggleFavorite(clip); }}
+                        type="button"
+                        title="Favorite"
+                      >
+                        <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="clip-preview">
                   {renderPreview(clip)}
                 </div>
                 
                 <div className="clip-footer">
-                  <div className="clip-meta">
-                    <div className="clip-meta-item">
-                      {getIcon(clip.type)}
-                      <span style={{ textTransform: 'uppercase' }}>{clip.type}</span>
-                    </div>
-                    <span className="clip-meta-sep" aria-hidden="true">•</span>
-                    <div className="clip-meta-item" title={clip.deviceId}>
-                      {device.icon}
-                      <span>{device.label}</span>
-                    </div>
+                  <div className="clip-device" title={clip.deviceId}>
+                    {device.icon}
+                    <span>{device.label}</span>
                   </div>
-                  {isSelected && <span className="shortcut-hint">ENTER</span>}
+                  <div className="clip-hint">
+                    {clip.__demo ? "Click to copy" : (isSelected ? "ENTER" : "Click to paste")}
+                  </div>
                 </div>
               </div>
             );
@@ -467,11 +814,21 @@ export default function App() {
       </div>
 
       {showSettings && (
-        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
+        <div className="settings-overlay" onClick={closeSettings}>
+          {settingsBackdropDataUrl && (
+            <img
+              className="settings-backdrop"
+              src={settingsBackdropDataUrl}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+            />
+          )}
+          <div className="settings-scrim" aria-hidden="true" />
           <div className="settings-panel" onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
               <h2 style={{ margin: 0 }}>Preferences</h2>
-              <button className="icon-btn" onClick={() => setShowSettings(false)}>
+              <button className="icon-btn" onClick={closeSettings}>
                 <X size={24} />
               </button>
             </div>
@@ -536,7 +893,7 @@ export default function App() {
             </div>
 
             <div className="settings-actions">
-              <button className="btn-cancel" onClick={() => setShowSettings(false)}>Cancel</button>
+              <button className="btn-cancel" onClick={closeSettings}>Cancel</button>
               <button className="btn-save" onClick={saveConfig}>Save Changes</button>
             </div>
           </div>

@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("macos", {
   captureClipboardNow: () => ipcRenderer.invoke("clipboard:capture-now"),
 
   toggleWindow: () => ipcRenderer.invoke("window:toggle"),
+  captureWindow: () => ipcRenderer.invoke("window:capture"),
 
   onOpenSettings: (cb) => {
     const listener = (_evt, payload) => cb(payload);

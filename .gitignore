@@ -9,3 +9,7 @@ dist
 
 apps/macos/dist-electron
 skills
+
+# Project uses workspaces; keep workspace artifacts out of git.
+apps/landing/node_modules
+apps/landing/dist
