@@ -498,7 +498,6 @@ const createMainWindow = async () => {
     alwaysOnTop: true,
     autoHideMenuBar: true,
     visualEffectState: "active",
-    vibrancy: "hud",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
