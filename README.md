@@ -8,6 +8,10 @@ Open-source, free **Paste.app alternative**.
 - Local-first: no URL required; empty URL means local-only (no remote sync)
 - Optional sync: Cloudflare Workers + D1 (and R2 later for large blobs)
 
+## Screenshot
+
+<img width="3560" height="2336" alt="CleanShot 2026-02-12 at 15 31 49@2x" src="https://github.com/user-attachments/assets/30fa4f63-c7d8-454a-a7a2-fb2989e1646d" />
+
 ## Architecture
 
 ```mermaid
