@@ -30,19 +30,21 @@ declare global {
         contentHtml?: string | null;
         sourceUrl?: string | null;
         imageDataUrl?: string | null;
+        imagePreviewDataUrl?: string | null;
         tags?: string[];
       }) => Promise<any>;
       toggleFavorite: (id: string, isFavorite: boolean) => Promise<any>;
       deleteClip: (id: string) => Promise<any>;
       readClipboard: () => Promise<string>;
       writeClipboard: (
-        value: string | { text?: string; html?: string | null; imageDataUrl?: string | null }
+        value: string | { text?: string; html?: string | null; imageDataUrl?: string | null; imageUrl?: string | null }
       ) => Promise<{ ok: boolean; message?: string }>;
       pasteAndHide: (
-        value: string | { text?: string; html?: string | null; imageDataUrl?: string | null }
+        value: string | { text?: string; html?: string | null; imageDataUrl?: string | null; imageUrl?: string | null }
       ) => Promise<{ ok: boolean; message?: string }>;
       captureClipboardNow: () => Promise<{ ok: boolean; captured: boolean; reason?: string }>;
       toggleWindow: () => Promise<{ visible: boolean }>;
+      onOpenSettings: (cb: (payload: { at?: number } | undefined) => void) => () => void;
       onClipsChanged: (cb: (payload: { source?: string; at?: number } | undefined) => void) => () => void;
       onWindowShown: (cb: (payload: { at?: number } | undefined) => void) => () => void;
       onWindowHidden: (cb: (payload: { at?: number } | undefined) => void) => () => void;

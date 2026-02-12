@@ -9,7 +9,13 @@ export interface ClipItem {
   content: string;
   contentHtml?: string | null;
   sourceUrl?: string | null;
+  // Legacy: inline `data:image/...` payload (works but expensive to store/transfer).
+  // When R2-backed image storage is enabled, this may be null.
   imageDataUrl?: string | null;
+  // Small inline preview for list rendering (optional).
+  imagePreviewDataUrl?: string | null;
+  // Preferred: fetchable URL for the full image (optional, typically same-origin `/v1/images/...`).
+  imageUrl?: string | null;
   isFavorite: boolean;
   isDeleted: boolean;
   tags: string[];

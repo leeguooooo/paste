@@ -5,6 +5,7 @@ interface Env {
   API_VERSION: string;
   DB?: D1Database;
   CACHE?: KVNamespace;
+  IMAGES?: R2Bucket;
 }
 
 type ClipRecord = {
@@ -17,6 +18,8 @@ type ClipRecord = {
   contentHtml: string | null;
   sourceUrl: string | null;
   imageDataUrl: string | null;
+  imagePreviewDataUrl: string | null;
+  imageUrl: string | null;
   isFavorite: boolean;
   isDeleted: boolean;
   tags: string[];
@@ -35,6 +38,11 @@ type ClipRow = {
   content_html: string | null;
   source_url: string | null;
   image_data_url: string | null;
+  image_object_key: string | null;
+  image_mime: string | null;
+  image_bytes: number | null;
+  image_sha256: string | null;
+  image_preview_data_url: string | null;
   is_favorite: number;
   is_deleted: number;
   client_updated_at: number;
@@ -56,6 +64,7 @@ type SyncIncomingChange = {
   contentHtml?: string | null;
   sourceUrl?: string | null;
   imageDataUrl?: string | null;
+  imagePreviewDataUrl?: string | null;
   isFavorite?: boolean;
   isDeleted?: boolean;
   tags?: string[];
@@ -72,7 +81,10 @@ const MAX_SYNC_LIMIT = 300;
 const DEFAULT_LIST_LIMIT = 50;
 const DEFAULT_SYNC_LIMIT = 100;
 const RECENT_CLIPS_CACHE_TTL_SECONDS = 20;
-const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
+const MAX_IMAGE_DATA_URL_LENGTH_D1 = 1_500_000;
+// Upper bound for accepting image uploads when R2 is enabled. Still keep this
+// conservative to avoid oversized JSON payloads in Workers.
+const MAX_IMAGE_DATA_URL_LENGTH_UPLOAD = 12_000_000;
 
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
@@ -136,6 +148,42 @@ const normalizeTagKey = (name: string): string => normalizeTagName(name).toLower
 
 const isProbablyUrl = (value: string): boolean => /^https?:\/\/\S+$/i.test(value.trim());
 
+const isImageDataUrl = (value: string): boolean => /^data:image\/[^;]+;base64,/i.test(value.trim());
+
+const parseBase64DataUrl = (value: string): { mime: string; bytes: Uint8Array } | null => {
+  const trimmed = value.trim();
+  if (!isImageDataUrl(trimmed)) return null;
+  const comma = trimmed.indexOf(",");
+  if (comma < 0) return null;
+  const header = trimmed.slice(0, comma);
+  const body = trimmed.slice(comma + 1);
+  const match = header.match(/^data:([^;]+);base64$/i);
+  const mime = match?.[1]?.trim() || "application/octet-stream";
+  try {
+    const raw = atob(body);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+      bytes[i] = raw.charCodeAt(i);
+    }
+    return { mime, bytes };
+  } catch {
+    return null;
+  }
+};
+
+const bytesToHex = (bytes: ArrayBuffer): string => {
+  const arr = new Uint8Array(bytes);
+  let out = "";
+  for (const b of arr) out += b.toString(16).padStart(2, "0");
+  return out;
+};
+
+const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
+  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const digest = await crypto.subtle.digest("SHA-256", ab);
+  return bytesToHex(digest);
+};
+
 const extractUrlFromHtml = (value: string): string | null => {
   const match = value.match(/href\s*=\s*['"]([^'"]+)['"]/i);
   if (!match?.[1]) {
@@ -151,7 +199,13 @@ const inferClipType = (
   if (incoming.type && CLIP_TYPES.has(incoming.type)) {
     return incoming.type;
   }
-  if (incoming.imageDataUrl || existing?.image_data_url) {
+  if (
+    incoming.imageDataUrl ||
+    incoming.imagePreviewDataUrl ||
+    existing?.image_data_url ||
+    existing?.image_object_key ||
+    existing?.image_preview_data_url
+  ) {
     return "image";
   }
   if (incoming.contentHtml || existing?.content_html) {
@@ -256,13 +310,24 @@ const coalesceNullable = (incoming: string | null | undefined, current: string |
 
 const validateRichFields = (incoming: {
   imageDataUrl?: string | null;
+  imagePreviewDataUrl?: string | null;
   contentHtml?: string | null;
   sourceUrl?: string | null;
 }): Response | null => {
-  if (incoming.imageDataUrl && incoming.imageDataUrl.length > MAX_IMAGE_DATA_URL_LENGTH) {
+  if (incoming.imageDataUrl && !isImageDataUrl(incoming.imageDataUrl)) {
+    return fail("INVALID_IMAGE_DATA_URL", "imageDataUrl must be a base64 data:image/* URL", 400);
+  }
+  if (incoming.imagePreviewDataUrl && !isImageDataUrl(incoming.imagePreviewDataUrl)) {
     return fail(
-      "IMAGE_TOO_LARGE",
-      `imageDataUrl is too large (max ${MAX_IMAGE_DATA_URL_LENGTH} chars for current D1 storage mode)`,
+      "INVALID_IMAGE_PREVIEW_DATA_URL",
+      "imagePreviewDataUrl must be a base64 data:image/* URL",
+      400
+    );
+  }
+  if (incoming.imagePreviewDataUrl && incoming.imagePreviewDataUrl.length > MAX_IMAGE_DATA_URL_LENGTH_D1) {
+    return fail(
+      "IMAGE_PREVIEW_TOO_LARGE",
+      `imagePreviewDataUrl is too large (max ${MAX_IMAGE_DATA_URL_LENGTH_D1} chars)`,
       400
     );
   }
@@ -346,6 +411,7 @@ const fetchClipById = async (
     await db
       .prepare(
         `SELECT id, user_id, device_id, type, summary, content, content_html, source_url, image_data_url,
+                image_object_key, image_mime, image_bytes, image_sha256, image_preview_data_url,
                 is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
          FROM clips
          WHERE user_id = ?1 AND id = ?2`
@@ -390,6 +456,17 @@ const fetchTagsByClipIds = async (
   return map;
 };
 
+const buildClipImageUrl = (row: ClipRow): string | null => {
+  if (!row.image_object_key) return null;
+  const params = new URLSearchParams();
+  params.set("u", row.user_id);
+  if (row.image_sha256) {
+    // Used for cache-busting when a clip's image is replaced.
+    params.set("h", row.image_sha256);
+  }
+  return `/v1/images/${encodeURIComponent(row.id)}?${params.toString()}`;
+};
+
 const rowToClip = (row: ClipRow, tags: string[]): ClipRecord => ({
   id: row.id,
   userId: row.user_id,
@@ -400,6 +477,8 @@ const rowToClip = (row: ClipRow, tags: string[]): ClipRecord => ({
   contentHtml: row.content_html,
   sourceUrl: row.source_url,
   imageDataUrl: row.image_data_url,
+  imagePreviewDataUrl: row.image_preview_data_url,
+  imageUrl: buildClipImageUrl(row),
   isFavorite: intToBool(row.is_favorite),
   isDeleted: intToBool(row.is_deleted),
   tags,
@@ -531,10 +610,11 @@ const fetchClipWithTags = async (
 
 const applyClipChange = async (
   db: D1Database,
+  env: Env,
   identity: Identity,
   change: SyncIncomingChange,
   fallbackDeviceId: string
-): Promise<{ status: "applied" | "conflict"; clip: ClipRecord }> => {
+): Promise<{ status: "applied" | "conflict"; clip: ClipRecord } | Response> => {
   const now = Date.now();
   const clipId = change.id || crypto.randomUUID();
   const incomingClientUpdatedAt = change.clientUpdatedAt ?? now;
@@ -557,7 +637,77 @@ const applyClipChange = async (
   let content = (change.content ?? existing?.content ?? "").trim();
   let contentHtml = coalesceNullable(change.contentHtml, existing?.content_html ?? null);
   let sourceUrl = coalesceNullable(change.sourceUrl, existing?.source_url ?? null);
-  const imageDataUrl = coalesceNullable(change.imageDataUrl, existing?.image_data_url ?? null);
+  let imageDataUrl: string | null = existing?.image_data_url ?? null;
+  let imagePreviewDataUrl: string | null = existing?.image_preview_data_url ?? null;
+  let imageObjectKey: string | null = existing?.image_object_key ?? null;
+  let imageMime: string | null = existing?.image_mime ?? null;
+  let imageBytes: number | null = existing?.image_bytes ?? null;
+  let imageSha256: string | null = existing?.image_sha256 ?? null;
+
+  // Image updates are special: when IMAGES (R2) is configured we prefer storing
+  // larger blobs in R2 and keep only small previews/metadata in D1.
+  if (change.imageDataUrl !== undefined) {
+    const nextImageDataUrl = coalesceNullable(change.imageDataUrl, imageDataUrl);
+    if (!nextImageDataUrl) {
+      imageDataUrl = null;
+      imagePreviewDataUrl = change.imagePreviewDataUrl !== undefined ? coalesceNullable(change.imagePreviewDataUrl, null) : null;
+      imageObjectKey = null;
+      imageMime = null;
+      imageBytes = null;
+      imageSha256 = null;
+    } else {
+      // New image blob provided.
+      const trimmed = nextImageDataUrl.trim();
+      const maxLen = env.IMAGES ? MAX_IMAGE_DATA_URL_LENGTH_UPLOAD : MAX_IMAGE_DATA_URL_LENGTH_D1;
+      if (trimmed.length > maxLen) {
+        return fail("IMAGE_TOO_LARGE", `imageDataUrl is too large (max ${maxLen} chars)`, 400);
+      }
+      const INLINE_IMAGE_DATA_URL_LENGTH_MAX = 250_000;
+
+      if (env.IMAGES && trimmed.length > INLINE_IMAGE_DATA_URL_LENGTH_MAX) {
+        const parsed = parseBase64DataUrl(trimmed);
+        if (!parsed) {
+          return fail("INVALID_IMAGE_DATA_URL", "imageDataUrl must be a base64 data:image/* URL", 400);
+        }
+
+        const sha = await sha256Hex(parsed.bytes);
+        const key = `images/${identity.userId}/${sha}`;
+        const exists = await env.IMAGES.head(key);
+        if (!exists) {
+          await env.IMAGES.put(key, parsed.bytes, {
+            httpMetadata: {
+              contentType: parsed.mime,
+              cacheControl: "public, max-age=31536000, immutable"
+            }
+          });
+        }
+
+        imageDataUrl = null;
+        imageObjectKey = key;
+        imageMime = parsed.mime;
+        imageBytes = parsed.bytes.length;
+        imageSha256 = sha;
+        imagePreviewDataUrl =
+          change.imagePreviewDataUrl !== undefined
+            ? coalesceNullable(change.imagePreviewDataUrl, null)
+            : null;
+      } else {
+        // Inline in D1 (small images) to avoid extra R2 reads/ops on free tiers.
+        imageDataUrl = trimmed;
+        imageObjectKey = null;
+        imageMime = null;
+        imageBytes = null;
+        imageSha256 = null;
+        imagePreviewDataUrl =
+          change.imagePreviewDataUrl !== undefined
+            ? coalesceNullable(change.imagePreviewDataUrl, trimmed)
+            : trimmed;
+      }
+    }
+  } else if (change.imagePreviewDataUrl !== undefined) {
+    // Allow updating preview independently (e.g. backfill after migration).
+    imagePreviewDataUrl = coalesceNullable(change.imagePreviewDataUrl, imagePreviewDataUrl);
+  }
 
   if (!sourceUrl && isProbablyUrl(content)) {
     sourceUrl = content;
@@ -573,9 +723,9 @@ const applyClipChange = async (
     content = sourceUrl;
   }
 
-  const validationError = validateRichFields({ imageDataUrl, contentHtml, sourceUrl });
+  const validationError = validateRichFields({ imageDataUrl, imagePreviewDataUrl, contentHtml, sourceUrl });
   if (validationError) {
-    throw new Error(await validationError.text());
+    return validationError;
   }
 
   const summary = buildSummary(content, change.summary ?? existing?.summary, type, sourceUrl, contentHtml);
@@ -588,8 +738,9 @@ const applyClipChange = async (
       .prepare(
         `INSERT INTO clips (
           id, user_id, device_id, type, summary, content, content_html, source_url, image_data_url,
+          image_object_key, image_mime, image_bytes, image_sha256, image_preview_data_url,
           is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)`
       )
       .bind(
         clipId,
@@ -601,6 +752,11 @@ const applyClipChange = async (
         contentHtml,
         sourceUrl,
         imageDataUrl,
+        imageObjectKey,
+        imageMime,
+        imageBytes,
+        imageSha256,
+        imagePreviewDataUrl,
         boolToInt(isFavorite),
         boolToInt(isDeleted),
         incomingClientUpdatedAt,
@@ -613,8 +769,10 @@ const applyClipChange = async (
       .prepare(
         `UPDATE clips
          SET device_id = ?3, type = ?4, summary = ?5, content = ?6, content_html = ?7, source_url = ?8,
-             image_data_url = ?9, is_favorite = ?10, is_deleted = ?11,
-             client_updated_at = ?12, server_updated_at = ?13
+             image_data_url = ?9,
+             image_object_key = ?10, image_mime = ?11, image_bytes = ?12, image_sha256 = ?13, image_preview_data_url = ?14,
+             is_favorite = ?15, is_deleted = ?16,
+             client_updated_at = ?17, server_updated_at = ?18
          WHERE user_id = ?1 AND id = ?2`
       )
       .bind(
@@ -627,6 +785,11 @@ const applyClipChange = async (
         contentHtml,
         sourceUrl,
         imageDataUrl,
+        imageObjectKey,
+        imageMime,
+        imageBytes,
+        imageSha256,
+        imagePreviewDataUrl,
         boolToInt(isFavorite),
         boolToInt(isDeleted),
         incomingClientUpdatedAt,
@@ -723,12 +886,15 @@ const handleListClips = async (
     ? `
       c.id, c.user_id, c.device_id, c.type, c.summary, c.content,
       NULL AS content_html, c.source_url, NULL AS image_data_url,
+      c.image_object_key, c.image_mime, c.image_bytes, c.image_sha256,
+      COALESCE(c.image_preview_data_url, c.image_data_url) AS image_preview_data_url,
       c.is_favorite, c.is_deleted,
       c.client_updated_at, c.server_updated_at, c.created_at
     `
     : `
       c.id, c.user_id, c.device_id, c.type, c.summary, c.content,
       c.content_html, c.source_url, c.image_data_url,
+      c.image_object_key, c.image_mime, c.image_bytes, c.image_sha256, c.image_preview_data_url,
       c.is_favorite, c.is_deleted,
       c.client_updated_at, c.server_updated_at, c.created_at
     `;
@@ -784,8 +950,89 @@ const handleGetClip = async (
   return ok(clip);
 };
 
+const handleGetImage = async (
+  request: Request,
+  env: Env,
+  db: D1Database,
+  clipId: string
+): Promise<Response> => {
+  const url = new URL(request.url);
+  const u = url.searchParams.get("u")?.trim() ?? "";
+  const h = url.searchParams.get("h")?.trim() ?? "";
+  if (!u) {
+    return fail("INVALID_USER", "u (userId) is required", 400);
+  }
+  const headerUserId = request.headers.get("x-user-id")?.trim() ?? "";
+  if (headerUserId && headerUserId !== u) {
+    return fail("INVALID_USER", "u must match x-user-id when provided", 400);
+  }
+
+  const clip = await fetchClipById(db, u, clipId);
+  if (!clip) {
+    return fail("NOT_FOUND", "clip not found", 404);
+  }
+
+  let response: Response | null = null;
+  const imageSha = clip.image_sha256 || "";
+  const immutable = Boolean(imageSha && h && h === imageSha);
+
+  const cache = (caches as unknown as { default: Cache }).default;
+  // Cache key includes `u` (userId) and optional `h` (sha256) to avoid collisions
+  // and allow immutable caching when the image is replaced.
+  const cacheKey = new Request(url.toString(), { method: "GET" });
+  if (immutable) {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  if (clip.image_object_key && env.IMAGES) {
+    const obj = await env.IMAGES.get(clip.image_object_key);
+    if (!obj) {
+      return fail("NOT_FOUND", "image blob not found", 404);
+    }
+    const headers = new Headers();
+    obj.writeHttpMetadata(headers);
+    if (!headers.get("content-type")) {
+      headers.set("content-type", clip.image_mime || "application/octet-stream");
+    }
+    headers.set("cache-control", immutable ? "public, max-age=31536000, immutable" : "public, max-age=300");
+    headers.set("x-content-type-options", "nosniff");
+    if (imageSha) {
+      headers.set("etag", `"${imageSha}"`);
+    }
+    response = new Response(obj.body, { status: 200, headers });
+  } else if (clip.image_data_url) {
+    const parsed = parseBase64DataUrl(clip.image_data_url);
+    if (!parsed) {
+      return fail("INVALID_IMAGE_DATA_URL", "stored imageDataUrl is invalid", 500);
+    }
+    const headers = new Headers();
+    headers.set("content-type", parsed.mime);
+    headers.set("cache-control", "public, max-age=300");
+    headers.set("x-content-type-options", "nosniff");
+    const body = parsed.bytes.buffer.slice(
+      parsed.bytes.byteOffset,
+      parsed.bytes.byteOffset + parsed.bytes.byteLength
+    ) as ArrayBuffer;
+    response = new Response(body, { status: 200, headers });
+  }
+
+  if (!response) {
+    return fail("NOT_FOUND", "image not available", 404);
+  }
+
+  // Only cache when the URL is immutable (h matches sha256).
+  if (immutable) {
+    await cache.put(cacheKey, response.clone());
+  }
+  return response;
+};
+
 const handleCreateClip = async (
   request: Request,
+  env: Env,
   db: D1Database,
   identity: Identity,
   cache?: KVNamespace
@@ -798,6 +1045,7 @@ const handleCreateClip = async (
     contentHtml?: string | null;
     sourceUrl?: string | null;
     imageDataUrl?: string | null;
+    imagePreviewDataUrl?: string | null;
     isFavorite?: boolean;
     isDeleted?: boolean;
     tags?: string[];
@@ -818,7 +1066,8 @@ const handleCreateClip = async (
   const richValidation = validateRichFields({
     contentHtml: parsed.contentHtml,
     sourceUrl: parsed.sourceUrl,
-    imageDataUrl: parsed.imageDataUrl
+    imageDataUrl: parsed.imageDataUrl,
+    imagePreviewDataUrl: parsed.imagePreviewDataUrl
   });
   if (richValidation) {
     return richValidation;
@@ -832,19 +1081,24 @@ const handleCreateClip = async (
     contentHtml: parsed.contentHtml,
     sourceUrl: parsed.sourceUrl,
     imageDataUrl: parsed.imageDataUrl,
+    imagePreviewDataUrl: parsed.imagePreviewDataUrl,
     isFavorite: parsed.isFavorite ?? false,
     isDeleted: parsed.isDeleted ?? false,
     tags: parsed.tags ?? [],
     clientUpdatedAt: parsed.clientUpdatedAt
   };
 
-  const result = await applyClipChange(db, identity, change, identity.deviceId);
+  const result = await applyClipChange(db, env, identity, change, identity.deviceId);
+  if (result instanceof Response) {
+    return result;
+  }
   await invalidateRecentClipsCache(cache, identity.userId);
   return ok(result.clip, 201);
 };
 
 const handlePatchClip = async (
   request: Request,
+  env: Env,
   db: D1Database,
   identity: Identity,
   clipId: string,
@@ -857,6 +1111,7 @@ const handlePatchClip = async (
     contentHtml?: string | null;
     sourceUrl?: string | null;
     imageDataUrl?: string | null;
+    imagePreviewDataUrl?: string | null;
     isFavorite?: boolean;
     isDeleted?: boolean;
     tags?: string[];
@@ -878,7 +1133,8 @@ const handlePatchClip = async (
   const richValidation = validateRichFields({
     contentHtml: parsed.contentHtml,
     sourceUrl: parsed.sourceUrl,
-    imageDataUrl: parsed.imageDataUrl
+    imageDataUrl: parsed.imageDataUrl,
+    imagePreviewDataUrl: parsed.imagePreviewDataUrl
   });
   if (richValidation) {
     return richValidation;
@@ -891,6 +1147,7 @@ const handlePatchClip = async (
 
   const result = await applyClipChange(
     db,
+    env,
     identity,
     {
       id: clipId,
@@ -901,6 +1158,7 @@ const handlePatchClip = async (
       contentHtml: parsed.contentHtml,
       sourceUrl: parsed.sourceUrl,
       imageDataUrl: parsed.imageDataUrl,
+      imagePreviewDataUrl: parsed.imagePreviewDataUrl,
       isFavorite: parsed.isFavorite,
       isDeleted: parsed.isDeleted,
       tags: parsed.tags,
@@ -908,6 +1166,10 @@ const handlePatchClip = async (
     },
     identity.deviceId
   );
+
+  if (result instanceof Response) {
+    return result;
+  }
 
   if (result.status === "conflict") {
     return fail("CONFLICT", "incoming change is older than server record", 409);
@@ -919,6 +1181,7 @@ const handlePatchClip = async (
 
 const handleDeleteClip = async (
   request: Request,
+  env: Env,
   db: D1Database,
   identity: Identity,
   clipId: string,
@@ -941,6 +1204,7 @@ const handleDeleteClip = async (
 
   const result = await applyClipChange(
     db,
+    env,
     identity,
     {
       id: clipId,
@@ -949,6 +1213,10 @@ const handleDeleteClip = async (
     },
     identity.deviceId
   );
+
+  if (result instanceof Response) {
+    return result;
+  }
 
   if (result.status === "conflict") {
     return fail("CONFLICT", "incoming delete is older than server record", 409);
@@ -1089,11 +1357,14 @@ const handleSyncPull = async (
     ? `
       id, user_id, device_id, type, summary, content,
       NULL AS content_html, source_url, NULL AS image_data_url,
+      image_object_key, image_mime, image_bytes, image_sha256,
+      COALESCE(image_preview_data_url, image_data_url) AS image_preview_data_url,
       is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
     `
     : `
       id, user_id, device_id, type, summary, content,
       content_html, source_url, image_data_url,
+      image_object_key, image_mime, image_bytes, image_sha256, image_preview_data_url,
       is_favorite, is_deleted, client_updated_at, server_updated_at, created_at
     `;
 
@@ -1129,6 +1400,7 @@ const handleSyncPull = async (
 
 const handleSyncPush = async (
   request: Request,
+  env: Env,
   db: D1Database,
   identity: Identity,
   cache?: KVNamespace
@@ -1166,13 +1438,17 @@ const handleSyncPush = async (
     const richValidation = validateRichFields({
       contentHtml: change.contentHtml,
       sourceUrl: change.sourceUrl,
-      imageDataUrl: change.imageDataUrl
+      imageDataUrl: change.imageDataUrl,
+      imagePreviewDataUrl: change.imagePreviewDataUrl
     });
     if (richValidation) {
       return richValidation;
     }
 
-    const result = await applyClipChange(db, identity, change, identity.deviceId);
+    const result = await applyClipChange(db, env, identity, change, identity.deviceId);
+    if (result instanceof Response) {
+      return result;
+    }
     if (result.status === "applied") {
       applied.push(result.clip);
     } else {
@@ -1193,6 +1469,11 @@ const handleSyncPush = async (
 
 const getClipIdFromPath = (path: string): string | null => {
   const match = path.match(/^\/v1\/clips\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+};
+
+const getImageIdFromPath = (path: string): string | null => {
+  const match = path.match(/^\/v1\/images\/([^/]+)$/);
   return match ? decodeURIComponent(match[1]) : null;
 };
 
@@ -1227,6 +1508,15 @@ export default {
         });
       }
 
+      // Public image streaming endpoint (no-auth phase).
+      // Needs to be accessible via <img src="..."> so it cannot rely on custom headers.
+      if (request.method === "GET") {
+        const imageId = getImageIdFromPath(path);
+        if (imageId) {
+          return handleGetImage(request, env, db, imageId);
+        }
+      }
+
       const identityOrError = getIdentity(request);
       if (identityOrError instanceof Response) {
         return identityOrError;
@@ -1238,7 +1528,7 @@ export default {
       }
 
       if (request.method === "POST" && path === "/v1/clips") {
-        return handleCreateClip(request, db, identity, env.CACHE);
+        return handleCreateClip(request, env, db, identity, env.CACHE);
       }
 
       if (request.method === "GET") {
@@ -1251,14 +1541,14 @@ export default {
       if (request.method === "PATCH") {
         const clipId = getClipIdFromPath(path);
         if (clipId) {
-          return handlePatchClip(request, db, identity, clipId, env.CACHE);
+          return handlePatchClip(request, env, db, identity, clipId, env.CACHE);
         }
       }
 
       if (request.method === "DELETE") {
         const clipId = getClipIdFromPath(path);
         if (clipId) {
-          return handleDeleteClip(request, db, identity, clipId, env.CACHE);
+          return handleDeleteClip(request, env, db, identity, clipId, env.CACHE);
         }
       }
 
@@ -1282,7 +1572,7 @@ export default {
       }
 
       if (request.method === "POST" && path === "/v1/sync/push") {
-        return handleSyncPush(request, db, identity, env.CACHE);
+        return handleSyncPush(request, env, db, identity, env.CACHE);
       }
 
       return fail("NOT_FOUND", "Route not found", 404);

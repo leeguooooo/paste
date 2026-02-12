@@ -156,6 +156,30 @@ body {
   font-weight: 600;
 }
 
+.clip-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.clip-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.clip-meta-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-meta-sep {
+  opacity: 0.6;
+}
+
 .icon-btn {
   background: transparent;
   border: none;

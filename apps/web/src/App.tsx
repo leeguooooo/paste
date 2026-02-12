@@ -9,7 +9,11 @@ import {
   Link as LinkIcon,
   Image as ImageIcon,
   FileText,
-  Code
+  Code,
+  Globe,
+  Monitor,
+  Smartphone,
+  Cpu
 } from "lucide-react";
 
 const API_BASE = "/v1";
@@ -17,6 +21,20 @@ const API_BASE = "/v1";
 // Default identity from localStorage for cross-device sync
 const DEFAULT_USER_ID = localStorage.getItem("paste_user_id") || "user_demo";
 const DEFAULT_DEVICE_ID = localStorage.getItem("paste_device_id") || "web_browser";
+
+const isValidImageDataUrl = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  // Only render safe image data URLs. Other data: types or plain base64 strings
+  // should not be treated as <img src>.
+  return value.startsWith("data:image/");
+};
+
+const getImageSrc = (clip: ClipItem): string | null => {
+  if (isValidImageDataUrl(clip.imagePreviewDataUrl)) return clip.imagePreviewDataUrl;
+  if (isValidImageDataUrl(clip.imageDataUrl)) return clip.imageDataUrl;
+  if (typeof clip.imageUrl === "string" && clip.imageUrl.trim()) return clip.imageUrl;
+  return null;
+};
 
 export default function App() {
   const [userId, setUserId] = useState(DEFAULT_USER_ID);
@@ -30,6 +48,7 @@ export default function App() {
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const inflightImagePrefetchRef = useRef(new Set<string>());
 
   const fetchHeaders = {
     "x-user-id": userId,
@@ -43,6 +62,8 @@ export default function App() {
       const params = new URLSearchParams();
       if (query) params.append("q", query);
       params.append("limit", "50");
+      // Prefer lightweight list responses; images can render from preview/url.
+      params.append("lite", "1");
 
       const res = await fetch(`${API_BASE}/clips?${params.toString()}`, {
         headers: fetchHeaders
@@ -68,6 +89,43 @@ export default function App() {
       return null;
     }
   }, [userId, deviceId]);
+
+  // Best-effort: if list results are "lite" (no imageDataUrl), gradually hydrate
+  // image clips so previews can render without requiring a copy action.
+  useEffect(() => {
+    let cancelled = false;
+
+    const missing = clips.filter(
+      (clip) =>
+        clip.type === "image" &&
+        !isValidImageDataUrl(clip.imagePreviewDataUrl) &&
+        !isValidImageDataUrl(clip.imageDataUrl) &&
+        !(typeof clip.imageUrl === "string" && clip.imageUrl.trim())
+    );
+    if (missing.length === 0) return;
+
+    void (async () => {
+      // Avoid blasting the API; fetch a few per render cycle.
+      for (const clip of missing.slice(0, 12)) {
+        if (cancelled) return;
+        if (inflightImagePrefetchRef.current.has(clip.id)) continue;
+        inflightImagePrefetchRef.current.add(clip.id);
+        try {
+          const fetched = await fetchClipById(clip.id);
+          if (cancelled) return;
+          if (fetched) {
+            setClips((prev) => prev.map((c) => (c.id === fetched.id ? { ...c, ...fetched } : c)));
+          }
+        } finally {
+          inflightImagePrefetchRef.current.delete(clip.id);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clips, fetchClipById]);
 
   useEffect(() => {
     void loadClips(true);
@@ -111,7 +169,11 @@ export default function App() {
   const handleCopy = async (clip: ClipItem) => {
     try {
       let effective = clip;
-      if (clip.type === "image" && (!clip.imageDataUrl || !String(clip.imageDataUrl).startsWith("data:image/"))) {
+      if (
+        clip.type === "image" &&
+        !isValidImageDataUrl(clip.imageDataUrl) &&
+        !(typeof clip.imageUrl === "string" && clip.imageUrl.trim())
+      ) {
         const fetched = await fetchClipById(clip.id);
         if (fetched) {
           effective = fetched;
@@ -119,9 +181,14 @@ export default function App() {
         }
       }
 
-      if (effective.type === "image" && effective.imageDataUrl && String(effective.imageDataUrl).startsWith("data:image/")) {
+      if (effective.type === "image" && isValidImageDataUrl(effective.imageDataUrl)) {
         // Best-effort image copy (may fail due to browser permission model).
         const blob = await (await fetch(String(effective.imageDataUrl))).blob();
+        const ClipboardItemCtor = (window as any).ClipboardItem as any;
+        if (!ClipboardItemCtor) throw new Error("ClipboardItem not supported");
+        await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
+      } else if (effective.type === "image" && typeof effective.imageUrl === "string" && effective.imageUrl.trim()) {
+        const blob = await (await fetch(effective.imageUrl)).blob();
         const ClipboardItemCtor = (window as any).ClipboardItem as any;
         if (!ClipboardItemCtor) throw new Error("ClipboardItem not supported");
         await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
@@ -164,6 +231,30 @@ export default function App() {
     }
   };
 
+  const getDeviceMeta = (deviceId: string): { icon: React.ReactNode; label: string } => {
+    const raw = String(deviceId || "").trim();
+    const lower = raw.toLowerCase();
+
+    if (lower.includes("web") || lower.includes("browser")) {
+      return { icon: <Globe size={12} />, label: "WEB" };
+    }
+    if (lower.includes("mac")) {
+      return { icon: <Monitor size={12} />, label: "MAC" };
+    }
+    if (lower.includes("ios") || lower.includes("iphone") || lower.includes("ipad")) {
+      return { icon: <Smartphone size={12} />, label: "IOS" };
+    }
+    if (lower.includes("android")) {
+      return { icon: <Smartphone size={12} />, label: "ANDROID" };
+    }
+    if (raw) {
+      const cleaned = raw.replace(/[_-]+/g, " ").trim();
+      const short = cleaned.length > 14 ? `${cleaned.slice(0, 14)}...` : cleaned;
+      return { icon: <Cpu size={12} />, label: short.toUpperCase() };
+    }
+    return { icon: <Cpu size={12} />, label: "DEVICE" };
+  };
+
   return (
     <main className="app-shell">
       <div className="history-shelf">
@@ -189,6 +280,7 @@ export default function App() {
           {clips.map((clip, index) => {
             const isSelected = index === selectedIndex;
             const isCopied = copiedId === clip.id;
+            const device = getDeviceMeta(clip.deviceId);
             return (
               <div 
                 key={clip.id} 
@@ -196,16 +288,23 @@ export default function App() {
                 onClick={() => { setSelectedIndex(index); void handleCopy(clip); }}
               >
                 <div className="clip-preview">
-                  {clip.type === "image" && clip.imageDataUrl && String(clip.imageDataUrl).startsWith("data:image/") ? (
-                    <img src={clip.imageDataUrl} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />
+                  {clip.type === "image" && getImageSrc(clip) ? (
+                    <img src={getImageSrc(clip) as string} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />
                   ) : (
                     <div className="preview-text">{isCopied ? "✓ Copied!" : clip.content}</div>
                   )}
                 </div>
                 <div className="clip-footer">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {getIcon(clip.type)}
-                    <span>{clip.type}</span>
+                  <div className="clip-meta">
+                    <div className="clip-meta-item">
+                      {getIcon(clip.type)}
+                      <span>{clip.type}</span>
+                    </div>
+                    <span className="clip-meta-sep" aria-hidden="true">•</span>
+                    <div className="clip-meta-item" title={clip.deviceId}>
+                      {device.icon}
+                      <span>{device.label}</span>
+                    </div>
                   </div>
                   <div className="clip-actions" onClick={e => e.stopPropagation()}>
                     <Star 
