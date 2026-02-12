@@ -8,6 +8,46 @@ Open-source, free **Paste.app alternative**.
 - Local-first: no URL required; empty URL means local-only (no remote sync)
 - Optional sync: Cloudflare Workers + D1 (and R2 later for large blobs)
 
+## Architecture
+
+```mermaid
+graph TD
+  subgraph Clients
+    Mac["macOS Tray App (Electron, local-first)"]
+    Web["Web / PWA (Cloudflare Pages)"]
+    IOS["iOS (planned)"]
+  end
+
+  subgraph Cloudflare
+    API["Workers API (/v1/*)"]
+    D1[("D1 (metadata + small payloads)")]
+    KV[("KV (cache)")]
+    R2[("R2 (large blobs, planned)")]
+  end
+
+  Mac -->|optional sync| API
+  Web --> API
+  IOS --> API
+
+  API --> D1
+  API -. optional .-> KV
+  API -. planned .-> R2
+```
+
+```mermaid
+flowchart LR
+  C["Clipboard Change"] --> P["Build Payload (text/link/html/image)"]
+  P --> D{"apiBase configured?"}
+
+  D -- "No" --> L["Local JSON DB (retention + keep favorites)"]
+  D -- "Yes" --> R["Remote API (Workers + D1)"]
+
+  L --> UI["Quick Paste UI"]
+  R --> UI
+
+  UI --> Copy["Copy back to clipboard and hide"]
+```
+
 ## Keywords / 关键词
 
 These are here for discovery (GitHub + search engines):
@@ -34,7 +74,7 @@ These are here for discovery (GitHub + search engines):
 - 标签 / 收藏 / 搜索
 - 开源 Paste
 
-## Current Features
+## Features
 
 - Web/PWA: browse, search, tags, favorites, sync
 - API: `text`/`link`/`html`/`image` (image uses Data URL in D1 for now; about 1_500_000 chars limit; large blobs will move to R2)
