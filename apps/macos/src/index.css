@@ -391,8 +391,30 @@ body {
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
+.settings-row select {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  border: 0.5px solid var(--border-color);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--card-fg);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  outline: none;
+  user-select: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
 .settings-row input[type="text"]::placeholder {
   color: color-mix(in srgb, var(--card-muted), transparent 10%);
+}
+
+.settings-row select:focus {
+  border-color: color-mix(in srgb, var(--primary), white 10%);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.22);
 }
 
 .settings-row input[type="text"]:focus {

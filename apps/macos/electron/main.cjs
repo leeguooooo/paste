@@ -1,39 +1,62 @@
-const { randomUUID, createHash } = require("node:crypto");
-const {
-  app,
-  BrowserWindow,
-  clipboard,
-  dialog,
-  globalShortcut,
-  Tray,
-  Menu,
-  nativeImage,
-  ipcMain,
-  screen,
-  shell,
-  systemPreferences
-} = require("electron");
-const fs = require("node:fs");
-const path = require("node:path");
-const { execFile, execFileSync } = require("node:child_process");
-const { autoUpdater } = require("electron-updater");
+// Electron main process can crash with "write EPIPE" if stdout/stderr (or an IPC
+// channel used by console) is a closed pipe. This can happen depending on how
+// the app is launched (dev tooling, background launch agents, etc).
+//
+// Patch early (before other imports might log) so transient logging doesn't
+// bring down the app.
+const collectErrorChain = (err) => {
+  const out = [];
+  const seen = new Set();
+  const queue = [err];
+  while (queue.length) {
+    const cur = queue.shift();
+    if (!cur || (typeof cur !== "object" && typeof cur !== "function")) continue;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    out.push(cur);
 
-// Electron main process can crash with "write EPIPE" if stdout/stderr is a closed pipe
-// (common when launched via certain parent processes). Ignore broken-pipe writes so
-// transient logging doesn't bring down the app.
-const isIgnorablePipeWriteError = (err) =>
-  Boolean(err) &&
-  typeof err === "object" &&
-  (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED" || err.code === "ERR_IPC_CHANNEL_CLOSED");
-
-const safeConsoleMethod = (name) => {
-  const original = console[name];
-  if (typeof original !== "function") return;
-  if (original.__paste_console_patched) return;
-
-  console[name] = (...args) => {
+    // Common nesting patterns across Node/Electron/lib wrappers.
     try {
-      original.apply(console, args);
+      queue.push(cur.cause, cur.originalError, cur.inner, cur.error, cur.reason);
+    } catch {
+      // ignore
+    }
+  }
+  return out;
+};
+
+const isIgnorablePipeWriteError = (err) => {
+  const candidates = collectErrorChain(err);
+  for (const e of candidates) {
+    try {
+      const code = e.code;
+      if (code === "EPIPE" || code === "ERR_STREAM_DESTROYED" || code === "ERR_IPC_CHANNEL_CLOSED") {
+        return true;
+      }
+      const errno = e.errno;
+      const syscall = e.syscall;
+      const msg = String(e.message || "");
+      if (errno === -32 && String(syscall || "").toLowerCase() === "write") {
+        return true;
+      }
+      if (/write/i.test(msg) && /\bEPIPE\b/i.test(msg)) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+};
+
+const safeWrapFn = (fn) => {
+  if (typeof fn !== "function") return null;
+  if (fn.__paste_console_patched) return fn;
+  const wrapped = function (...args) {
+    try {
+      // Preserve `this` for prototype methods.
+      // eslint-disable-next-line no-invalid-this
+      return fn.apply(this, args);
     } catch (err) {
       if (isIgnorablePipeWriteError(err)) {
         return;
@@ -41,7 +64,32 @@ const safeConsoleMethod = (name) => {
       throw err;
     }
   };
-  console[name].__paste_console_patched = true;
+  wrapped.__paste_console_patched = true;
+  return wrapped;
+};
+
+const patchConsole = () => {
+  for (const name of ["error", "warn", "log", "info", "debug"]) {
+    try {
+      const wrapped = safeWrapFn(console[name]);
+      if (wrapped) console[name] = wrapped;
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const { Console } = require("node:console");
+    for (const name of ["error", "warn", "log", "info", "debug"]) {
+      const desc = Object.getOwnPropertyDescriptor(Console.prototype, name);
+      const original = desc?.value;
+      const wrapped = safeWrapFn(original);
+      if (!wrapped || wrapped === original) continue;
+      Object.defineProperty(Console.prototype, name, { ...desc, value: wrapped });
+    }
+  } catch {
+    // ignore
+  }
 };
 
 const patchBrokenPipeWrites = (stream) => {
@@ -76,13 +124,56 @@ const patchBrokenPipeWrites = (stream) => {
   }
 };
 
+const patchProcessSend = () => {
+  try {
+    if (typeof process.send !== "function") return;
+    if (process.send.__paste_patched) return;
+    const orig = process.send.bind(process);
+    const wrapped = (...args) => {
+      try {
+        return orig(...args);
+      } catch (err) {
+        if (isIgnorablePipeWriteError(err)) return false;
+        throw err;
+      }
+    };
+    wrapped.__paste_patched = true;
+    process.send = wrapped;
+  } catch {
+    // ignore
+  }
+};
+
+const patchFatalException = () => {
+  try {
+    if (typeof process._fatalException !== "function") return;
+    if (process._fatalException.__paste_patched) return;
+    const orig = process._fatalException.bind(process);
+    const wrapped = (err) => {
+      try {
+        if (isIgnorablePipeWriteError(err)) {
+          // Tell Node/Electron the exception was handled, so it won't print and exit.
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+      return orig(err);
+    };
+    wrapped.__paste_patched = true;
+    process._fatalException = wrapped;
+  } catch {
+    // ignore
+  }
+};
+
 patchBrokenPipeWrites(process.stdout);
 patchBrokenPipeWrites(process.stderr);
-safeConsoleMethod("error");
-safeConsoleMethod("warn");
-safeConsoleMethod("log");
-safeConsoleMethod("info");
-safeConsoleMethod("debug");
+patchBrokenPipeWrites(process._stdout);
+patchBrokenPipeWrites(process._stderr);
+patchProcessSend();
+patchFatalException();
+patchConsole();
 
 process.on("uncaughtException", (err) => {
   if (isIgnorablePipeWriteError(err)) {
@@ -90,6 +181,26 @@ process.on("uncaughtException", (err) => {
   }
   throw err;
 });
+
+const { randomUUID, createHash } = require("node:crypto");
+const {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  globalShortcut,
+  Tray,
+  Menu,
+  nativeImage,
+  ipcMain,
+  screen,
+  shell,
+  systemPreferences
+} = require("electron");
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFile, execFileSync } = require("node:child_process");
+const { autoUpdater } = require("electron-updater");
 
 const isDev = !app.isPackaged;
 const parsePort = (raw, fallback) => {

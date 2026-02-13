@@ -311,6 +311,7 @@ export default function App() {
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
   const [settingsBackdropDataUrl, setSettingsBackdropDataUrl] = useState<string | null>(null);
@@ -343,7 +344,7 @@ export default function App() {
   const loadClips = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
-      const res = await window.macos.listClips({ q: query || undefined });
+      const res = await window.macos.listClips({ q: query || undefined, favorite: favoriteOnly || undefined });
       if (res?.ok) {
         const nextItems = dedupeRecentItems(collapseConsecutiveDuplicates(res.data.items ?? []));
         setClips(nextItems);
@@ -353,7 +354,7 @@ export default function App() {
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [query]);
+  }, [query, favoriteOnly]);
 
   useEffect(() => {
     void loadConfig();
@@ -448,7 +449,17 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => void loadClips(), 150);
     return () => clearTimeout(timer);
-  }, [query, loadClips]);
+  }, [query, favoriteOnly, loadClips]);
+
+  const formatDateTime = (createdAtMs: number): string => {
+    const n = Number(createdAtMs);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    try {
+      return new Date(n).toLocaleString();
+    } catch {
+      return "";
+    }
+  };
 
   useEffect(() => {
     if (clips.length > 0 && selectedIndex >= clips.length) {
@@ -516,8 +527,8 @@ export default function App() {
     }
   }, [selectedIndex, clips.length]);
 
-	  const handleCopy = async (clip: ClipItem) => {
-	    let effective = clip;
+		  const handleCopy = async (clip: ClipItem) => {
+		    let effective = clip;
     if (
       clip.type === "image" &&
       !isValidImageDataUrl(clip.imageDataUrl) &&
@@ -546,11 +557,28 @@ export default function App() {
 	      imageDataUrl: effective.imageDataUrl ?? null,
 	      imageUrl: effective.imageUrl ?? null
     });
-    if (!res?.ok) {
-      // Surface the root error (most commonly missing Accessibility permission).
-      alert(res?.message || "Pastyx failed");
-    }
-  };
+	    if (!res?.ok) {
+	      // Surface the root error (most commonly missing Accessibility permission).
+	      alert(res?.message || "Pastyx failed");
+	    }
+	  };
+
+    const handleCopyPlainText = async (clip: ClipItem) => {
+      const text =
+        clip.type === "link" && typeof clip.sourceUrl === "string" && clip.sourceUrl.trim()
+          ? clip.sourceUrl.trim()
+          : (clip.content || clip.sourceUrl || "");
+
+      const res = await window.macos.pasteAndHide({
+        text,
+        html: null,
+        imageDataUrl: null,
+        imageUrl: null
+      });
+      if (!res?.ok) {
+        alert(res?.message || "Pastyx failed");
+      }
+    };
 
   const handleCopyDemo = async (clip: ClipCardItem) => {
     // For the empty state demo cards, don't hide the window or paste into another app.
@@ -583,26 +611,44 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (showSettings) return;
-      switch (e.key) {
-        case "ArrowRight":
-          e.preventDefault();
-          selectionReasonRef.current = "keyboard";
-          setSelectedIndex(prev => Math.min(prev + 1, clips.length - 1));
-          break;
-        case "ArrowLeft":
-          e.preventDefault();
-          selectionReasonRef.current = "keyboard";
-          setSelectedIndex(prev => Math.max(prev - 1, 0));
-          break;
-        case "Enter":
-          e.preventDefault();
-          if (clips[selectedIndex]) {
-            void handleCopy(clips[selectedIndex]);
-          }
-          break;
+			  useEffect(() => {
+			    const handleKeyDown = (e: KeyboardEvent) => {
+			      if (showSettings) return;
+            // In-window quick paste: Cmd+1~Cmd+9
+            if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+              const idx = Number(e.key) - 1;
+              const target = clips[idx] as ClipCardItem | undefined;
+              if (target) {
+                e.preventDefault();
+                if ((target as any).__demo) {
+                  void handleCopyDemo(target as any);
+                } else {
+                  void handleCopy(target);
+                }
+              }
+              return;
+            }
+			      switch (e.key) {
+			        case "ArrowRight":
+			          e.preventDefault();
+			          selectionReasonRef.current = "keyboard";
+			          setSelectedIndex(prev => Math.min(prev + 1, clips.length - 1));
+			          break;
+			        case "ArrowLeft":
+			          e.preventDefault();
+			          selectionReasonRef.current = "keyboard";
+			          setSelectedIndex(prev => Math.max(prev - 1, 0));
+			          break;
+			        case "Enter":
+			          e.preventDefault();
+			          if (clips[selectedIndex]) {
+                  if (e.shiftKey) {
+                    void handleCopyPlainText(clips[selectedIndex]);
+                  } else {
+                    void handleCopy(clips[selectedIndex]);
+                  }
+			          }
+			          break;
         case "Escape":
           e.preventDefault();
           if (query) {
@@ -694,7 +740,7 @@ export default function App() {
     return <div className="preview-text">{previewTextById.get(clip.id) ?? ""}</div>;
   };
 
-  const showDemo = !loading && clips.length === 0 && query.trim() === "";
+  const showDemo = !favoriteOnly && !loading && clips.length === 0 && query.trim() === "";
   const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(config.userId, config.deviceId) : clips;
 
   const saveConfig = async () => {
@@ -720,43 +766,53 @@ export default function App() {
         }
       }}
     >
-      <div className="history-shelf" onClick={e => e.stopPropagation()}>
-        <div className="toolbar">
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ position: 'relative' }}>
-              <Search 
-                size={20} 
-                style={{ position: 'absolute', left: 16, top: 14, color: 'rgba(255,255,255,0.3)' }} 
-              />
-              <input
-                ref={searchInputRef}
-                className="search-input"
-                placeholder="Type to search history..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
-                autoFocus
-              />
-            </div>
-            <button 
-              className="icon-btn" 
-              onClick={() => void openSettings()}
-              style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
-              title="Settings (Cmd+,)"
-            >
-              <Settings size={22} />
-            </button>
-          </div>
-        </div>
+	      <div className="history-shelf" onClick={e => e.stopPropagation()}>
+	        <div className="toolbar">
+	          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
+	            <div style={{ position: 'relative' }}>
+	              <Search 
+	                size={20} 
+	                style={{ position: 'absolute', left: 16, top: 14, color: 'rgba(255,255,255,0.3)' }} 
+	              />
+	              <input
+	                ref={searchInputRef}
+	                className="search-input"
+	                placeholder="Type to search history..."
+	                value={query}
+	                onChange={(e) => setQuery(e.target.value)}
+	                onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
+	                autoFocus
+	              />
+	            </div>
+              <button
+                className="icon-btn"
+                onClick={() => setFavoriteOnly((v) => !v)}
+                style={{ padding: '10px', background: favoriteOnly ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
+                title={favoriteOnly ? "Showing favorites (click to show all)" : "Show favorites only"}
+                type="button"
+              >
+                <Star size={22} fill={favoriteOnly ? "currentColor" : "transparent"} />
+              </button>
+	            <button 
+	              className="icon-btn" 
+	              onClick={() => void openSettings()}
+	              style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
+	              title="Settings (Cmd+,)"
+	            >
+	              <Settings size={22} />
+	            </button>
+	          </div>
+	        </div>
 
         <div className="history-container" ref={scrollContainerRef}>
-          {visibleClips.map((clip, index) => {
-            const isSelected = index === selectedIndex;
-            const device = getDeviceMeta(clip.deviceId);
-            const accent = getTypeAccent(clip.type);
-            const age = formatAgeShort(clip.createdAt);
-            const cardStyle = { ["--accent" as any]: accent } as React.CSSProperties;
-            return (
+	          {visibleClips.map((clip, index) => {
+	            const isSelected = index === selectedIndex;
+	            const device = getDeviceMeta(clip.deviceId);
+	            const accent = getTypeAccent(clip.type);
+	            const age = formatAgeShort(clip.createdAt);
+              const fullTime = formatDateTime(clip.createdAt);
+	            const cardStyle = { ["--accent" as any]: accent } as React.CSSProperties;
+	            return (
               <div 
                 key={clip.id} 
                 className={`clip-card ${isSelected ? 'selected' : ''}`}
@@ -775,11 +831,11 @@ export default function App() {
                   void handleCopy(clip);
                 }}
               >
-                <div className="clip-head">
-                  <div className="clip-head-left">
-                    <span className="clip-type-pill">{clip.type}</span>
-                    <span className="clip-age">{age}</span>
-                  </div>
+	                <div className="clip-head">
+	                  <div className="clip-head-left">
+	                    <span className="clip-type-pill">{clip.type}</span>
+	                    <span className="clip-age" title={fullTime}>{age}</span>
+	                  </div>
                   {!clip.__demo && (
                     <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
                       <button
@@ -878,24 +934,45 @@ export default function App() {
               </div>
             </div>
 
-	            <div className="settings-section">
-	              <div className="settings-section-title">
-	                <Monitor size={12} /> Capture
-	              </div>
-	              <div className="checkbox-row">
-	                <input
-                  type="checkbox"
-                  checked={config.autoCapture}
-                  onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}
-                />
-                Auto-capture clipboard history
-              </div>
-            </div>
+		            <div className="settings-section">
+		              <div className="settings-section-title">
+		                <Monitor size={12} /> Capture
+		              </div>
+		              <div className="checkbox-row">
+		                <input
+		                  type="checkbox"
+		                  checked={config.autoCapture}
+		                  onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}
+		                />
+		                Auto-capture clipboard history
+		              </div>
+		            </div>
 
-            <div className="settings-actions">
-              <button className="btn-cancel" onClick={closeSettings}>Cancel</button>
-              <button className="btn-save" onClick={saveConfig}>Save Changes</button>
-            </div>
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <ArrowRight size={12} /> Retention
+                  </div>
+                  <div className="settings-row">
+                    <label>History retention</label>
+                    <select
+                      value={config.retention}
+                      onChange={e => setConfig({ ...config, retention: e.target.value as AppConfig["retention"] })}
+                    >
+                      <option value="30d">30 days</option>
+                      <option value="180d">180 days</option>
+                      <option value="365d">365 days</option>
+                      <option value="forever">Forever</option>
+                    </select>
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8, lineHeight: 1.35 }}>
+                    Applies to local mode. Favorites are always kept.
+                  </div>
+                </div>
+
+	            <div className="settings-actions">
+	              <button className="btn-cancel" onClick={closeSettings}>Cancel</button>
+	              <button className="btn-save" onClick={saveConfig}>Save Changes</button>
+	            </div>
           </div>
         </div>
       )}
