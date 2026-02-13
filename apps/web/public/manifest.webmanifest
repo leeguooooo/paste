@@ -1,6 +1,6 @@
 {
-  "name": "Paste",
-  "short_name": "Paste",
+  "name": "Pastyx",
+  "short_name": "Pastyx",
   "description": "Open-source clipboard manager (macOS + Web) with optional Cloudflare sync",
   "start_url": "/",
   "display": "standalone",

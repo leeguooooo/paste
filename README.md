@@ -1,29 +1,32 @@
-# paste
+# Pastyx
 
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/leeguooooo?logo=github)](https://github.com/sponsors/leeguooooo)
 
-Open-source, free **Paste.app alternative**.
+Open-source, free clipboard utility toolkit.
 
-中文提示：别再找 Paste 破解版了，直接用我们的 `paste` 开源版本吧。
+中文提示：这是一个独立的开源工具，用于剪贴板历史、截图和录屏。
 免费可用、代码透明，还支持按需自建同步服务。
+我们与官方无隶属关系。
+我们不是 pasteapp，不是 paste 的盗版，且是专注开源的 Pastyx。
+English note: This is an independent open-source project. We are not pasteapp, not a pirated copy of Paste, and we are Pastyx, focused on open-source development.
 
-`paste` is a local-first clipboard manager for macOS (Paste-style), with an optional Cloudflare backend for cross-device sync.
+Pastyx is a local-first clipboard toolkit for macOS (clipboard history, screenshot, and screen recording), with an optional Cloudflare backend for cross-device sync.
 
-- macOS: tray app, no main window, Quick Paste panel
+- macOS: tray app, no main window, quick panel
 - Local-first: no URL required; empty URL means local-only (no remote sync)
 - Optional sync: Cloudflare Workers + D1 (and R2 later for large blobs)
 
 ## Quick Start
 
 1. Download the latest build from GitHub Releases (macOS `x64` / `arm64`).
-2. Open app, use the global hotkey to show the Quick Paste panel.
+2. Open app, use the global hotkey to show the quick panel.
 3. Optional: configure `API Base` to enable cross-device sync.
 
 ## macOS Notes
 
 - Auto-paste requires **Accessibility** permission (because we simulate `Cmd+V`).
   - Dev mode: enable Accessibility for `Electron`.
-  - Release build: enable Accessibility for `paste`.
+- Release build: enable Accessibility for `Pastyx`.
 - Builds are **unsigned / not notarized** for now.
   - `v0.1.3+` adds a minimal ad-hoc signature to avoid the common “App is damaged” error.
   - For a polished distribution, add Apple Developer ID signing + notarization.
@@ -66,7 +69,7 @@ flowchart LR
   D -- "No" --> L["Local JSON DB (retention + keep favorites)"]
   D -- "Yes" --> R["Remote API (Workers + D1)"]
 
-  L --> UI["Quick Paste UI"]
+  L --> UI["Quick Clip UI"]
   R --> UI
 
   UI --> Copy["Copy back to clipboard, hide, and auto-paste"]
@@ -76,9 +79,9 @@ flowchart LR
 
 These are here for discovery (GitHub + search engines):
 
-- paste alternative
-- Paste.app alternative
-- open paste
+- clipboard alternative
+- independent clipboard toolkit alternative
+- open clip toolkit
 - open source clipboard manager
 - clipboard history
 - clipboard manager macOS
@@ -90,22 +93,22 @@ These are here for discovery (GitHub + search engines):
 
 中文关键词：
 
-- Paste 替代
+- 开源工具替代方案
 - 剪贴板管理器
 - 剪贴板历史
 - macOS 剪贴板工具
 - 多设备同步
 - 标签 / 收藏 / 搜索
-- 开源 Paste
-- Open Paste
-- Paste 破解版替代
-- 破解版 Paste 替代
+- 开源剪贴板工具
+- Open toolkit
+- 破解类工具替代方案
+- 第三方替代品说明（非官方）
 
 ## Features
 
 - Types: `text` / `link` / `html` / `image`
 - macOS:
-  - Tray app; Quick Paste panel (no main window)
+- Tray app; Quick panel (no main window)
   - Select a clip to copy, hide, and auto-paste back to your previous app
   - Local-first retention: `30d` / `180d` / `365d` / `forever` (favorites are kept)
 - Sync (optional): Cloudflare Workers + D1
@@ -118,7 +121,7 @@ These are here for discovery (GitHub + search engines):
 apps/
   api/          # Cloudflare Worker API
   web/          # Cloudflare Pages frontend
-  macos/        # Electron macOS desktop app (Paste-style)
+  macos/        # Electron macOS desktop app (clipboard, screenshot, recording)
 packages/
   shared/       # Shared types/contracts
 docs/
@@ -238,7 +241,8 @@ For forks: `apps/api/wrangler.toml` includes `misonote.com` routes. Replace them
 
 ## Trademark Note
 
-Paste is a product name owned by its respective owners. This project is an independent, open-source alternative.
+This project is an independent, open-source toolkit. 我们与官方无隶属关系。
+We are not affiliated with any official clipboard vendor.
 
 ## Support / 赞助开发
 

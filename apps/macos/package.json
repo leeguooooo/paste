@@ -32,6 +32,6 @@
     "vite": "^7.1.0",
     "wait-on": "^8.0.5"
   },
-  "description": "Local-first clipboard manager for macOS (Paste-style).",
+  "description": "Local-first clipboard manager for macOS, with clipboard history and capture workflows.",
   "author": "leeguooooo"
 }

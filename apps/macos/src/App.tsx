@@ -237,7 +237,7 @@ const DEMO_SVG_DATA_URL =
       <rect x="34" y="92" width="220" height="16" rx="8" fill="rgba(255,255,255,0.20)"/>
       <rect x="34" y="118" width="260" height="16" rx="8" fill="rgba(255,255,255,0.16)"/>
       <rect x="34" y="144" width="190" height="16" rx="8" fill="rgba(255,255,255,0.12)"/>
-      <text x="44" y="64" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto" font-size="16" fill="rgba(255,255,255,0.92)" font-weight="700">Paste Demo</text>
+      <text x="44" y="64" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto" font-size="16" fill="rgba(255,255,255,0.92)" font-weight="700">Pastyx Demo</text>
     </svg>`
   );
 
@@ -259,8 +259,8 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       __demo: true,
       id: "demo:text",
       type: "text",
-      summary: "欢迎使用 Paste",
-      content: "欢迎使用 Paste。点击任意卡片可复制示例内容。",
+      summary: "欢迎使用 Pastyx",
+      content: "欢迎使用 Pastyx。点击任意卡片可复制示例内容。",
       createdAt: now - 9_000,
     },
     {
@@ -288,8 +288,8 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       id: "demo:html",
       type: "html",
       summary: "HTML 示例",
-      content: "<strong>Paste</strong> is local-first.",
-      contentHtml: "<strong>Paste</strong> is local-first.",
+      content: "<strong>Pastyx</strong> is local-first.",
+      contentHtml: "<strong>Pastyx</strong> is local-first.",
       createdAt: now - 120_000,
     },
     {
@@ -298,7 +298,7 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       id: "demo:image",
       type: "image",
       summary: "图片示例",
-      content: "Paste demo image",
+      content: "Pastyx demo image",
       imagePreviewDataUrl: DEMO_SVG_DATA_URL,
       imageDataUrl: DEMO_SVG_DATA_URL,
       createdAt: now - 240_000,
@@ -548,7 +548,7 @@ export default function App() {
     });
     if (!res?.ok) {
       // Surface the root error (most commonly missing Accessibility permission).
-      alert(res?.message || "Paste failed");
+      alert(res?.message || "Pastyx failed");
     }
   };
 

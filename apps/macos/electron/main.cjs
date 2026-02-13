@@ -26,6 +26,24 @@ const isIgnorablePipeWriteError = (err) =>
   typeof err === "object" &&
   (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED" || err.code === "ERR_IPC_CHANNEL_CLOSED");
 
+const safeConsoleMethod = (name) => {
+  const original = console[name];
+  if (typeof original !== "function") return;
+  if (original.__paste_console_patched) return;
+
+  console[name] = (...args) => {
+    try {
+      original.apply(console, args);
+    } catch (err) {
+      if (isIgnorablePipeWriteError(err)) {
+        return;
+      }
+      throw err;
+    }
+  };
+  console[name].__paste_console_patched = true;
+};
+
 const patchBrokenPipeWrites = (stream) => {
   if (!stream) return;
 
@@ -60,6 +78,18 @@ const patchBrokenPipeWrites = (stream) => {
 
 patchBrokenPipeWrites(process.stdout);
 patchBrokenPipeWrites(process.stderr);
+safeConsoleMethod("error");
+safeConsoleMethod("warn");
+safeConsoleMethod("log");
+safeConsoleMethod("info");
+safeConsoleMethod("debug");
+
+process.on("uncaughtException", (err) => {
+  if (isIgnorablePipeWriteError(err)) {
+    return;
+  }
+  throw err;
+});
 
 const isDev = !app.isPackaged;
 const parsePort = (raw, fallback) => {
@@ -72,8 +102,8 @@ const devPort = parsePort(process.env.PASTE_DEV_PORT ?? process.env.VITE_PORT, 5
 const devUrl = `http://127.0.0.1:${devPort}`;
 const trayDebug = process.env.PASTE_TRAY_DEBUG === "1";
 
-const configFile = path.join(app.getPath("userData"), "paste-macos-config.json");
-const localClipsFile = path.join(app.getPath("userData"), "paste-local-clips.json");
+const configFile = path.join(app.getPath("userData"), "pastyx-macos-config.json");
+const localClipsFile = path.join(app.getPath("userData"), "pastyx-local-clips.json");
 
 // Keep a conservative limit even in local mode to avoid huge on-disk JSON.
 const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
@@ -238,7 +268,7 @@ const defaultConfig = {
   deviceId: "macos_desktop",
   autoCapture: true,
   launchAtLogin: false,
-  // Paste-like options: 30d / 180d / 365d / forever
+  // Default retention options: 30d / 180d / 365d / forever
   // Favorites are kept even when expiring.
   retention: "180d",
   hotkey: "CommandOrControl+Shift+V"
@@ -931,6 +961,35 @@ const ensureMainWindow = async () => {
   return mainWindow;
 };
 
+const fitMainWindowToDisplay = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  const currentBounds = mainWindow.getBounds();
+  const display = screen.getDisplayMatching(currentBounds);
+  const workArea = display?.workArea || display?.bounds;
+  if (!workArea) {
+    return;
+  }
+
+  const nextBounds = {
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height
+  };
+  const unchanged =
+    currentBounds.x === nextBounds.x &&
+    currentBounds.y === nextBounds.y &&
+    currentBounds.width === nextBounds.width &&
+    currentBounds.height === nextBounds.height;
+
+  if (!unchanged) {
+    mainWindow.setBounds(nextBounds, false);
+  }
+};
+
 const toggleMainWindow = async () => {
   const win = await ensureMainWindow();
   if (!win) {
@@ -942,6 +1001,7 @@ const toggleMainWindow = async () => {
     return { visible: false };
   }
 
+  fitMainWindowToDisplay();
   win.show();
   win.focus();
   return { visible: true };
@@ -1081,13 +1141,13 @@ const updateTrayMenu = () => {
 
 const createMainWindow = async () => {
   const display = screen.getPrimaryDisplay();
-  const { width, height } = display.bounds;
+  const { x: workAreaX, y: workAreaY, width, height } = display.workArea || display.bounds;
 
   mainWindow = new BrowserWindow({
     width,
     height,
-    x: 0,
-    y: 0,
+    x: workAreaX,
+    y: workAreaY,
     show: false,
     frame: false,
     transparent: true,
@@ -1175,7 +1235,7 @@ const createTray = () => {
   }
 
   tray = new Tray(trayIcon);
-  const trayLabel = trayDebug ? `PASTE_TRAY_DEBUG_${process.pid}` : "paste";
+  const trayLabel = trayDebug ? `PASTE_TRAY_DEBUG_${process.pid}` : "pastyx";
   tray.setToolTip(trayLabel);
   if (process.platform === "darwin") {
     // If the icon is too subtle or hidden by tinting, a short title guarantees something visible.
@@ -1293,7 +1353,7 @@ const setupAutoUpdate = () => {
         const res = await dialog.showMessageBox(mainWindow || undefined, {
           type: "info",
           message: "Update downloaded",
-          detail: "Restart paste to install the update.",
+          detail: "Restart Pastyx to install the update.",
           buttons: ["Later", "Restart Now"],
           defaultId: 1,
           cancelId: 0
@@ -1564,7 +1624,7 @@ const setupIpc = () => {
             `macOS blocked synthetic keystrokes.\n\n` +
             `Please enable Accessibility for the running app:\n` +
             `- If you run via npm (dev): enable Accessibility for "Electron"\n` +
-            `- If you run the built app: enable Accessibility for "paste"\n\n` +
+            `- If you run the built app: enable Accessibility for "Pastyx"\n\n` +
             `System Settings -> Privacy & Security -> Accessibility`
         };
       }
@@ -1657,12 +1717,12 @@ const setupIpc = () => {
             await runAppleScript(['tell application "System Events" to keystroke "v" using {command down}']);
           }
         } catch (error) {
-          const msg = error instanceof Error ? error.message : "paste failed";
+          const msg = error instanceof Error ? error.message : "Pastyx failed";
           const front = getFrontmostApp();
           return {
             ok: false,
             message:
-              `paste failed: ${msg}\n\n` +
+              `Pastyx failed: ${msg}\n\n` +
               `Target app: ${targetName || "(unknown)"} (${targetBundleId || "no bundle id"})\n` +
               `Captured at: ${targetCapturedAt ? new Date(targetCapturedAt).toISOString() : "(unknown)"}\n` +
               `Frontmost before paste: ${front.name || "(unknown)"} (${front.bundleId || "no bundle id"})\n` +
@@ -1674,7 +1734,7 @@ const setupIpc = () => {
 
       return { ok: true };
     } catch (error) {
-      return { ok: false, message: "paste failed" };
+      return { ok: false, message: "Pastyx failed" };
     }
   });
 
@@ -1716,7 +1776,7 @@ app.on("ready", async () => {
     }
   }
 
-  app.setName("paste");
+  app.setName("Pastyx");
   try {
     app.setLoginItemSettings({ openAtLogin: Boolean(readConfig().launchAtLogin) });
   } catch {
@@ -1733,6 +1793,18 @@ app.on("ready", async () => {
   }
 
   await ensureMainWindow();
+  fitMainWindowToDisplay();
+  try {
+    screen.on("display-metrics-changed", () => {
+      try {
+        fitMainWindowToDisplay();
+      } catch {
+        // ignore
+      }
+    });
+  } catch {
+    // ignore
+  }
   setupAutoUpdate();
   const hk = registerGlobalShortcut();
   if (hk?.ok && hk?.corrected && hk?.hotkey && hk.hotkey !== readConfig().hotkey) {
@@ -1749,7 +1821,7 @@ app.on("ready", async () => {
         message: "Global hotkey not registered",
         detail:
           "Another app may be using the same hotkey.\n\n" +
-          "Click the tray icon to open paste, then Settings -> Hotkey to choose a different one.",
+          "Click the tray icon to open Pastyx, then Settings -> Hotkey to choose a different one.",
         buttons: ["OK"],
         defaultId: 0
       });

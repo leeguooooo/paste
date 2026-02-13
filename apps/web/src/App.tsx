@@ -222,8 +222,8 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       __demo: true,
       id: "demo:text",
       type: "text",
-      summary: "欢迎使用 Paste",
-      content: "欢迎使用 Paste。点击任意卡片可复制示例内容。",
+      summary: "欢迎使用 Pastyx",
+      content: "欢迎使用 Pastyx。点击任意卡片可复制示例内容。",
       createdAt: now - 9_000,
     },
     {
@@ -251,8 +251,8 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       id: "demo:html",
       type: "html",
       summary: "HTML 示例",
-      content: "<strong>Paste</strong> is local-first.",
-      contentHtml: "<strong>Paste</strong> is local-first.",
+      content: "<strong>Pastyx</strong> is local-first.",
+      contentHtml: "<strong>Pastyx</strong> is local-first.",
       createdAt: now - 120_000,
     },
     {
@@ -261,7 +261,7 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       id: "demo:image",
       type: "image",
       summary: "图片示例",
-      content: "Paste icon",
+      content: "Pastyx icon",
       imageUrl: "/icon-512.svg",
       createdAt: now - 240_000,
     },
@@ -520,9 +520,9 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="marketing-nav">
-        <a className="brand" href="/" aria-label="Paste home">
+        <a className="brand" href="/" aria-label="Pastyx home">
           <span className="brand-mark" aria-hidden="true">P</span>
-          <span className="brand-name">Paste</span>
+          <span className="brand-name">Pastyx</span>
         </a>
         <nav className="marketing-links" aria-label="Primary">
           <a href="https://github.com/leeguooooo/paste" target="_blank" rel="noopener noreferrer">Source Code</a>
@@ -535,7 +535,9 @@ export default function App() {
       <section className="marketing-hero">
         <div className="hero-inner">
           <div className="hero-copy">
-            <div className="hero-eyebrow">Open-source. Local-first. Paste.app alternative.</div>
+            <div className="hero-eyebrow">
+              Open-source. Local-first. Independent product for clipboard history, screenshots, and screen recording.
+            </div>
             <h1 className="hero-title">
               The Clipboard,
               <br />
@@ -543,6 +545,9 @@ export default function App() {
             </h1>
             <p className="hero-subtitle">
               A high-performance clipboard manager for macOS and Web. Beautiful, private, and free forever.
+            </p>
+            <p className="hero-subtitle mt-2 text-white/60">
+              This is an independent product and is not affiliated with any official clipboard software vendor.
             </p>
 
             <div className="hero-ctas">
@@ -562,7 +567,7 @@ export default function App() {
                   <span className="dot dot-red" />
                   <span className="dot dot-yellow" />
                   <span className="dot dot-green" />
-                  <span className="device-browser-title">paste-web.misonote.com</span>
+                  <span className="device-browser-title">pastyx-web.misonote.com</span>
                 </div>
                 <img
                   src="/product/shots/web-live-1920x1080.png"

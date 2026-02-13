@@ -11,7 +11,7 @@ export default function App() {
             <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-emerald-400 rounded-lg flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
               <Layout className="text-white" size={18} />
             </div>
-            <span className="font-bold text-xl tracking-tight">Paste</span>
+            <span className="font-bold text-xl tracking-tight">Pastyx</span>
           </div>
           <div className="flex items-center gap-6">
             <a href="https://github.com/leeguooooo/paste" className="text-sm font-medium text-white/60 hover:text-white transition-colors">Source Code</a>
@@ -35,6 +35,9 @@ export default function App() {
             </h1>
             <p className="text-xl md:text-2xl text-white/50 max-w-2xl mx-auto mb-12 font-medium leading-relaxed">
               An open-source, high-performance clipboard manager for macOS and Web. Beautiful, private, and free forever.
+            </p>
+            <p className="text-base text-white/40 max-w-2xl mx-auto mb-10">
+              This is an independent product and is not affiliated with any official clipboard software vendor.
             </p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -65,10 +68,10 @@ export default function App() {
                 title="Your clipboard, anywhere"
                 description="Access and manage your history from the browser. Fully synced with the desktop client."
                 src="/product/shots/web-live-1920x1080.png"
-                alt="Paste web app screenshot"
+                alt="Pastyx web app screenshot"
                 overlay={{
                   src: "/product/shots/web-live-iphone14.png",
-                  alt: "Paste web app on iPhone",
+                  alt: "Pastyx web app on iPhone",
                 }}
               />
               <ProductShot
@@ -76,7 +79,7 @@ export default function App() {
                 title="Fast, native clipboard history"
                 description="Search, pin, and sync your clipboard across devices. Built for speed and privacy."
                 src="/product/shots/macos-readme.png"
-                alt="Paste macOS app screenshot"
+                alt="Pastyx macOS app screenshot"
               />
             </div>
 
@@ -112,7 +115,7 @@ export default function App() {
       <footer className="py-20 border-t border-white/5">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-10">
           <div className="text-white/40 text-sm">
-            © 2026 Paste Open Source Project. Built for the community.
+            © 2026 Pastyx Open Source Project. Built for the community.
           </div>
           <div className="flex gap-8 items-center text-sm font-medium text-white/60">
             <a href="#" className="hover:text-white transition-colors">Documentation</a>

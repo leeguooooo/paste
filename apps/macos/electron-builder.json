@@ -1,6 +1,6 @@
 {
-  "appId": "com.leeguooooo.paste",
-  "productName": "paste",
+  "appId": "com.leeguooooo.pastyx",
+  "productName": "Pastyx",
   "directories": {
     "output": "dist-electron"
   },
