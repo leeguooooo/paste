@@ -12,6 +12,7 @@ const parsePort = (raw: unknown, fallback: number) => {
 const devPort = parsePort(process.env.PASTE_DEV_PORT ?? process.env.VITE_PORT, 5174);
 
 export default defineConfig({
+  base: "./",
   plugins: [react()],
   resolve: {
     alias: {

@@ -4,6 +4,9 @@
 
 Open-source, free **Paste.app alternative**.
 
+中文提示：别再找 Paste 破解版了，直接用我们的 `paste` 开源版本吧。
+免费可用、代码透明，还支持按需自建同步服务。
+
 `paste` is a local-first clipboard manager for macOS (Paste-style), with an optional Cloudflare backend for cross-device sync.
 
 - macOS: tray app, no main window, Quick Paste panel

@@ -18,6 +18,49 @@ const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
 
+// Electron main process can crash with "write EPIPE" if stdout/stderr is a closed pipe
+// (common when launched via certain parent processes). Ignore broken-pipe writes so
+// transient logging doesn't bring down the app.
+const isIgnorablePipeWriteError = (err) =>
+  Boolean(err) &&
+  typeof err === "object" &&
+  (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED" || err.code === "ERR_IPC_CHANNEL_CLOSED");
+
+const patchBrokenPipeWrites = (stream) => {
+  if (!stream) return;
+
+  try {
+    if (typeof stream.on === "function") {
+      stream.on("error", (err) => {
+        if (isIgnorablePipeWriteError(err)) return;
+      });
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (typeof stream.write !== "function") return;
+    if (stream.write.__paste_patched) return;
+    const origWrite = stream.write.bind(stream);
+    const wrapped = (...args) => {
+      try {
+        return origWrite(...args);
+      } catch (err) {
+        if (isIgnorablePipeWriteError(err)) return false;
+        throw err;
+      }
+    };
+    wrapped.__paste_patched = true;
+    stream.write = wrapped;
+  } catch {
+    // ignore
+  }
+};
+
+patchBrokenPipeWrites(process.stdout);
+patchBrokenPipeWrites(process.stderr);
+
 const isDev = !app.isPackaged;
 const parsePort = (raw, fallback) => {
   const n = Number.parseInt(String(raw ?? ""), 10);
