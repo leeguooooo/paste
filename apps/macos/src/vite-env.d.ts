@@ -37,6 +37,13 @@ declare global {
       startGithubDeviceAuth: () => Promise<any>;
       pollGithubDeviceAuth: (deviceCode: string) => Promise<any>;
       logoutAuth: () => Promise<any>;
+      getLocalSyncStatus: () => Promise<{ ok: boolean; data?: { pendingCount: number }; message?: string }>;
+      runLocalSync: () => Promise<{
+        ok: boolean;
+        data?: { total: number; uploaded: number; failed: number };
+        message?: string;
+      }>;
+      dismissLocalSync: () => Promise<{ ok: boolean; data?: { skipped: boolean }; message?: string }>;
       listClips: (query?: { q?: string; favorite?: boolean }) => Promise<any>;
       getClip: (id: string) => Promise<any>;
       createClip: (payload: {

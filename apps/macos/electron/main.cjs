@@ -380,6 +380,9 @@ const defaultConfig = {
   deviceId: "macos_desktop",
   authToken: "",
   authGithubLogin: "",
+  // Tracks per-user choice after login when local history exists:
+  // imported | skipped
+  localSyncDecisionByUser: {},
   autoCapture: true,
   launchAtLogin: false,
   // Default retention options: 30d / 180d / 365d / forever
@@ -401,6 +404,18 @@ const normalizeConfig = (input) => {
   merged.userId = String(merged.userId || defaultConfig.userId).trim() || defaultConfig.userId;
   merged.authGithubLogin = String(merged.authGithubLogin || "").trim();
   merged.authToken = String(merged.authToken || "").trim();
+  const decisions = merged.localSyncDecisionByUser;
+  const normalizedDecisions = {};
+  if (decisions && typeof decisions === "object") {
+    for (const [k, v] of Object.entries(decisions)) {
+      const userId = String(k || "").trim();
+      const decision = String(v || "").trim();
+      if (!userId) continue;
+      if (decision !== "imported" && decision !== "skipped") continue;
+      normalizedDecisions[userId] = decision;
+    }
+  }
+  merged.localSyncDecisionByUser = normalizedDecisions;
   return merged;
 };
 
@@ -620,6 +635,45 @@ const localDeleteClip = (cfg, id) => {
   const cleaned = cleanupLocalDb(cfg, { clips: next });
   writeLocalDb(cleaned);
   return localOk({ ok: true });
+};
+
+const getLocalSyncDecision = (cfg, userId) => {
+  const uid = String(userId || "").trim();
+  if (!uid) return "";
+  const map = cfg?.localSyncDecisionByUser;
+  if (!map || typeof map !== "object") return "";
+  const v = map[uid];
+  if (v === "imported" || v === "skipped") return v;
+  return "";
+};
+
+const withLocalSyncDecision = (cfg, userId, decision) => {
+  const uid = String(userId || "").trim();
+  if (!uid) return cfg;
+  if (decision !== "imported" && decision !== "skipped") return cfg;
+  return {
+    ...cfg,
+    localSyncDecisionByUser: {
+      ...(cfg?.localSyncDecisionByUser && typeof cfg.localSyncDecisionByUser === "object"
+        ? cfg.localSyncDecisionByUser
+        : {}),
+      [uid]: decision
+    }
+  };
+};
+
+const listPendingLocalSyncClips = (cfg) => {
+  if (!isRemoteEnabled(cfg) || !isTokenAuthEnabled(cfg)) {
+    return [];
+  }
+  const userId = String(cfg?.userId || "").trim();
+  if (!userId) return [];
+  const decision = getLocalSyncDecision(cfg, userId);
+  if (decision) return [];
+
+  const db = readLocalDb();
+  const clips = Array.isArray(db?.clips) ? db.clips : [];
+  return clips.filter((c) => c && !c.isDeleted);
 };
 
 const isProbablyUrl = (value) => /^https?:\/\/\S+$/i.test((value || "").trim());
@@ -1786,6 +1840,86 @@ const setupIpc = () => {
     return localOk({
       loggedOut: true,
       userId: next.userId
+    });
+  });
+
+  ipcMain.handle("local-sync:status", async () => {
+    const cfg = readConfig();
+    const pending = listPendingLocalSyncClips(cfg);
+    return localOk({
+      pendingCount: pending.length
+    });
+  });
+
+  ipcMain.handle("local-sync:dismiss", async () => {
+    const cfg = readConfig();
+    const userId = String(cfg?.userId || "").trim();
+    if (!userId) {
+      return localFail("userId is missing");
+    }
+    writeConfig(withLocalSyncDecision(cfg, userId, "skipped"));
+    return localOk({ skipped: true });
+  });
+
+  ipcMain.handle("local-sync:run", async () => {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localFail("Please configure API Endpoint first");
+    }
+    if (!isTokenAuthEnabled(cfg)) {
+      return localFail("Please sign in with GitHub first");
+    }
+
+    const userId = String(cfg?.userId || "").trim();
+    if (!userId) {
+      return localFail("userId is missing");
+    }
+
+    const pending = listPendingLocalSyncClips(cfg);
+    if (pending.length === 0) {
+      writeConfig(withLocalSyncDecision(cfg, userId, "imported"));
+      return localOk({
+        total: 0,
+        uploaded: 0,
+        failed: 0
+      });
+    }
+
+    let uploaded = 0;
+    let failed = 0;
+    for (const clip of pending) {
+      const res = await remoteRequest(cfg, "/clips", {
+        method: "POST",
+        body: JSON.stringify({
+          id: clip?.id,
+          type: clip?.type,
+          summary: clip?.summary,
+          content: clip?.content || "",
+          contentHtml: clip?.contentHtml ?? null,
+          sourceUrl: clip?.sourceUrl ?? null,
+          imageDataUrl: clip?.imageDataUrl ?? null,
+          imagePreviewDataUrl: clip?.imagePreviewDataUrl ?? null,
+          isFavorite: Boolean(clip?.isFavorite),
+          isDeleted: false,
+          tags: Array.isArray(clip?.tags) ? clip.tags : [],
+          clientUpdatedAt: Number(clip?.clientUpdatedAt || clip?.createdAt || Date.now())
+        })
+      });
+      if (res?.ok) {
+        uploaded += 1;
+      } else {
+        failed += 1;
+      }
+    }
+
+    if (failed === 0) {
+      writeConfig(withLocalSyncDecision(cfg, userId, "imported"));
+    }
+
+    return localOk({
+      total: pending.length,
+      uploaded,
+      failed
     });
   });
 

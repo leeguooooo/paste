@@ -335,6 +335,8 @@ export default function App() {
   });
   const [authLoading, setAuthLoading] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [localSyncPendingCount, setLocalSyncPendingCount] = useState(0);
+  const [localSyncLoading, setLocalSyncLoading] = useState(false);
   const [deviceAuthSession, setDeviceAuthSession] = useState<DeviceAuthSession | null>(null);
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -425,6 +427,19 @@ export default function App() {
     }
   }, []);
 
+  const loadLocalSyncStatus = useCallback(async () => {
+    try {
+      const res = await window.macos.getLocalSyncStatus();
+      if (res?.ok && res.data) {
+        setLocalSyncPendingCount(Math.max(0, Number(res.data.pendingCount || 0)));
+        return;
+      }
+      setLocalSyncPendingCount(0);
+    } catch {
+      setLocalSyncPendingCount(0);
+    }
+  }, []);
+
   const pollDeviceAuth = useCallback(async (deviceCode: string) => {
     const code = String(deviceCode || "").trim();
     if (!code) return;
@@ -444,6 +459,7 @@ export default function App() {
         setAuthMessage("Signed in with GitHub.");
         await loadConfig();
         await loadAuthStatus();
+        await loadLocalSyncStatus();
         void loadClips(true);
         return;
       }
@@ -462,7 +478,7 @@ export default function App() {
       setDeviceAuthSession(null);
       setAuthMessage(e instanceof Error ? e.message : "GitHub auth failed.");
     }
-  }, [clearAuthPollTimer, loadAuthStatus, loadClips]);
+  }, [clearAuthPollTimer, loadAuthStatus, loadClips, loadLocalSyncStatus]);
 
   const startGithubAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -535,6 +551,7 @@ export default function App() {
       }
       setDeviceAuthSession(null);
       setAuthMessage("Signed out.");
+      setLocalSyncPendingCount(0);
       await loadConfig();
       await loadAuthStatus();
       void loadClips(true);
@@ -544,6 +561,46 @@ export default function App() {
       setAuthLoading(false);
     }
   }, [clearAuthPollTimer, loadAuthStatus, loadClips]);
+
+  const syncLocalHistoryNow = useCallback(async () => {
+    setLocalSyncLoading(true);
+    try {
+      const res = await window.macos.runLocalSync();
+      if (!res?.ok || !res?.data) {
+        setAuthMessage(String(res?.message || "Failed to sync local history."));
+        return;
+      }
+      const { total, uploaded, failed } = res.data;
+      if (failed > 0) {
+        setAuthMessage(`Synced ${uploaded}/${total}. ${failed} items failed. You can retry.`);
+      } else {
+        setAuthMessage(`Synced ${uploaded} local clips to cloud.`);
+      }
+      await loadLocalSyncStatus();
+      void loadClips(true);
+    } catch (e) {
+      setAuthMessage(e instanceof Error ? e.message : "Failed to sync local history.");
+    } finally {
+      setLocalSyncLoading(false);
+    }
+  }, [loadClips, loadLocalSyncStatus]);
+
+  const dismissLocalSyncPrompt = useCallback(async () => {
+    setLocalSyncLoading(true);
+    try {
+      const res = await window.macos.dismissLocalSync();
+      if (!res?.ok) {
+        setAuthMessage(String(res?.message || "Failed to update sync preference."));
+        return;
+      }
+      setLocalSyncPendingCount(0);
+      setAuthMessage("Skipped local history sync.");
+    } catch (e) {
+      setAuthMessage(e instanceof Error ? e.message : "Failed to update sync preference.");
+    } finally {
+      setLocalSyncLoading(false);
+    }
+  }, []);
 
   const copyText = useCallback(async (raw: string, label: string) => {
     const text = String(raw || "").trim();
@@ -586,6 +643,14 @@ export default function App() {
     void loadAuthStatus();
     void loadClips(true);
   }, [loadAuthStatus, loadClips]);
+
+  useEffect(() => {
+    if (!authStatus.authenticated) {
+      setLocalSyncPendingCount(0);
+      return;
+    }
+    void loadLocalSyncStatus();
+  }, [authStatus.authenticated, loadLocalSyncStatus]);
 
   useEffect(() => () => {
     clearAuthPollTimer();
@@ -1199,6 +1264,32 @@ export default function App() {
               )}
               {authMessage ? (
                 <div className="auth-message">{authMessage}</div>
+              ) : null}
+              {authStatus.authenticated && localSyncPendingCount > 0 ? (
+                <div className="auth-device-box">
+                  <div className="auth-device-title">Sync local history to cloud?</div>
+                  <div className="auth-device-hint">
+                    Found {localSyncPendingCount} local clips captured before sign-in.
+                  </div>
+                  <div className="auth-device-actions">
+                    <button
+                      className="btn-save"
+                      type="button"
+                      onClick={() => void syncLocalHistoryNow()}
+                      disabled={localSyncLoading}
+                    >
+                      {localSyncLoading ? "Syncing..." : "Sync now"}
+                    </button>
+                    <button
+                      className="btn-cancel"
+                      type="button"
+                      onClick={() => void dismissLocalSyncPrompt()}
+                      disabled={localSyncLoading}
+                    >
+                      Not now
+                    </button>
+                  </div>
+                </div>
               ) : null}
               {authStatus.authenticated && (
                 <div className="settings-row">

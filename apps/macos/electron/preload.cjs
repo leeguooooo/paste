@@ -184,6 +184,9 @@ contextBridge.exposeInMainWorld("macos", {
   startGithubDeviceAuth: () => ipcRenderer.invoke("auth:github-device-start"),
   pollGithubDeviceAuth: (deviceCode) => ipcRenderer.invoke("auth:github-device-poll", deviceCode),
   logoutAuth: () => ipcRenderer.invoke("auth:logout"),
+  getLocalSyncStatus: () => ipcRenderer.invoke("local-sync:status"),
+  runLocalSync: () => ipcRenderer.invoke("local-sync:run"),
+  dismissLocalSync: () => ipcRenderer.invoke("local-sync:dismiss"),
 
   listClips: (query) => ipcRenderer.invoke("clips:list", query),
   getClip: (id) => ipcRenderer.invoke("clips:get", id),
