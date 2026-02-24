@@ -1155,7 +1155,7 @@ export default function App() {
 
   const effectiveUserId = authStatus.user?.userId || config.userId;
   const remoteModeEnabled = /^https?:\/\//i.test(String(config.apiBase || "").trim());
-  const canRunICloudSyncNow = config.icloudAvailable && config.icloudSync && !remoteModeEnabled;
+  const canRunICloudSyncNow = config.icloudSync && !remoteModeEnabled;
   const showDemo = !favoriteOnly && !loading && clips.length === 0 && query.trim() === "";
   const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, config.deviceId) : clips;
 
@@ -1341,14 +1341,13 @@ export default function App() {
                   <input
                     type="checkbox"
                     checked={config.icloudSync}
-                    disabled={!config.icloudAvailable}
                     onChange={e => setConfig({ ...config, icloudSync: e.target.checked })}
                   />
                   Enable iCloud sync in local mode
                 </div>
                 {!config.icloudAvailable ? (
                   <div className="auth-message">
-                    iCloud Drive is unavailable. Turn on iCloud Drive in macOS Settings first.
+                    iCloud availability is not confirmed yet. You can still enable and click "Sync iCloud now" to initialize.
                   </div>
                 ) : null}
                 {config.icloudSync ? (

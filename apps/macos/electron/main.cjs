@@ -369,6 +369,53 @@ const updateState = {
   error: null
 };
 
+let updateSignatureErrorPrompted = false;
+
+const normalizeUpdateError = (errorLike) => {
+  const raw =
+    errorLike instanceof Error
+      ? String(errorLike.message || "auto update error")
+      : String(errorLike || "auto update error");
+  const isSignatureValidationError =
+    /code signature/i.test(raw) && /did not pass validation/i.test(raw);
+  if (!isSignatureValidationError) {
+    return {
+      raw,
+      userMessage: raw,
+      isSignatureValidationError: false
+    };
+  }
+  return {
+    raw,
+    userMessage:
+      "Auto-update failed signature validation. This release build is not signed with a trusted Developer ID certificate. Please update from GitHub Releases for now.",
+    isSignatureValidationError: true
+  };
+};
+
+const maybePromptManualUpdateForSignatureError = async (detailRaw) => {
+  if (updateSignatureErrorPrompted) return;
+  updateSignatureErrorPrompted = true;
+  try {
+    const res = await dialog.showMessageBox(mainWindow || undefined, {
+      type: "warning",
+      message: "Auto-update unavailable",
+      detail:
+        "Downloaded update package failed macOS code-signature validation.\n\n" +
+        "Please update manually from GitHub Releases.\n\n" +
+        (detailRaw ? `Details: ${detailRaw}` : ""),
+      buttons: ["OK", "Open Releases Page"],
+      defaultId: 1,
+      cancelId: 0
+    });
+    if (res.response === 1) {
+      await shell.openExternal(RELEASES_LATEST_URL);
+    }
+  } catch {
+    // ignore
+  }
+};
+
 const setUpdateState = (next) => {
   Object.assign(updateState, next || {});
   try {
@@ -490,7 +537,7 @@ const getConfigForRenderer = () => {
     deviceId: cfg.deviceId,
     authGithubLogin: cfg.authGithubLogin || "",
     icloudSync: Boolean(cfg.icloudSync),
-    icloudAvailable: fs.existsSync(iCloudDocumentsRoot),
+    icloudAvailable: isICloudDriveAvailable(),
     autoCapture: Boolean(cfg.autoCapture),
     launchAtLogin: Boolean(cfg.launchAtLogin),
     retention: cfg.retention,
@@ -505,22 +552,15 @@ const isICloudSyncEnabled = (cfg) => Boolean(cfg?.icloudSync);
 
 const isICloudDriveAvailable = () => {
   try {
-    return fs.existsSync(iCloudDocumentsRoot);
+    fs.mkdirSync(iCloudAppDir, { recursive: true });
+    return true;
   } catch {
     return false;
   }
 };
 
 const ensureICloudAppDir = () => {
-  try {
-    if (!isICloudDriveAvailable()) return false;
-    if (!fs.existsSync(iCloudAppDir)) {
-      fs.mkdirSync(iCloudAppDir, { recursive: true });
-    }
-    return true;
-  } catch {
-    return false;
-  }
+  return isICloudDriveAvailable();
 };
 
 const readDbFile = (file, createIfMissing = false) => {
@@ -1446,10 +1486,14 @@ const buildTrayTemplate = () => {
     try {
       await autoUpdater.checkForUpdates();
     } catch (error) {
+      const normalized = normalizeUpdateError(error);
       setUpdateState({
         checking: false,
-        error: error instanceof Error ? error.message : "update check failed"
+        error: normalized.userMessage
       });
+      if (normalized.isSignatureValidationError) {
+        void maybePromptManualUpdateForSignatureError(normalized.raw);
+      }
       try {
         await dialog.showMessageBox(mainWindow || undefined, {
           type: "error",
@@ -1773,10 +1817,14 @@ const setupAutoUpdate = () => {
   });
 
   autoUpdater.on("error", (error) => {
+    const normalized = normalizeUpdateError(error);
     setUpdateState({
       checking: false,
-      error: error instanceof Error ? error.message : "auto update error"
+      error: normalized.userMessage
     });
+    if (normalized.isSignatureValidationError) {
+      void maybePromptManualUpdateForSignatureError(normalized.raw);
+    }
   });
 
   // Check shortly after startup; GitHub API can be slow on first request.
