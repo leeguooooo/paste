@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
 import { Github, Globe, Shield, Zap, Layout, Monitor, ArrowRight, Download } from "lucide-react";
 
+const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL || "https://paste.misonote.com").trim();
+
 export default function App() {
   return (
     <div className="min-h-screen bg-[#050505] text-white selection:bg-blue-500/30 selection:text-blue-200">
@@ -15,7 +17,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-6">
             <a href="https://github.com/leeguooooo/paste" className="text-sm font-medium text-white/60 hover:text-white transition-colors">Source Code</a>
-            <a href="https://paste-web.misonote.com" className="bg-white text-black px-4 py-1.5 rounded-full text-sm font-semibold hover:bg-white/90 transition-all active:scale-95">Open Web App</a>
+            <a href={WEB_APP_URL} className="bg-white text-black px-4 py-1.5 rounded-full text-sm font-semibold hover:bg-white/90 transition-all active:scale-95">Open Web App</a>
           </div>
         </div>
       </nav>
