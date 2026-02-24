@@ -410,8 +410,28 @@ const defaultConfig = {
 
 const buildDefaultDeviceId = () => `mac_${randomUUID().slice(0, 8)}`;
 
+const normalizeApiBase = (raw) => {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (!/^https?:\/\//i.test(s)) return s;
+  try {
+    const u = new URL(s);
+    u.hash = "";
+    u.search = "";
+    let p = u.pathname.replace(/\/+$/g, "");
+    if (!p) {
+      p = "/v1";
+    }
+    u.pathname = p;
+    return u.toString().replace(/\/$/g, "");
+  } catch {
+    return s.replace(/\/+$/g, "");
+  }
+};
+
 const normalizeConfig = (input) => {
   const merged = { ...defaultConfig, ...(input || {}) };
+  merged.apiBase = normalizeApiBase(merged.apiBase);
   const deviceId = String(merged.deviceId || "").trim();
   if (!deviceId || deviceId === "macos_desktop") {
     merged.deviceId = buildDefaultDeviceId();
