@@ -1,7 +1,7 @@
 {
   "name": "pastyx",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "workspaces": [
     "apps/*",
     "packages/*"
