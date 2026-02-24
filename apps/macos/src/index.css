@@ -322,25 +322,70 @@ body {
 
 /* Settings Refinement */
 .settings-panel {
-  width: 440px;
+  width: clamp(720px, 88vw, 980px);
   background: var(--card-bg);
   backdrop-filter: blur(40px);
   border: 0.5px solid var(--border-color);
   border-radius: 28px;
-  padding: 32px;
+  padding: 24px;
   color: var(--card-fg);
   box-shadow: 0 40px 100px rgba(0,0,0,0.5);
   position: relative;
   z-index: 1;
-  max-height: calc(100vh - 48px);
+  max-height: calc(100vh - 36px);
   overflow: auto;
+}
+
+.settings-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.06);
+  border: 0.5px solid var(--border-color);
+  margin-bottom: 14px;
+}
+
+.settings-tab {
+  appearance: none;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--card-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.settings-tab:hover {
+  color: var(--card-fg);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.settings-tab.active {
+  color: var(--card-fg);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.settings-tab-content {
+  display: block;
+}
+
+.settings-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .settings-section {
   background: rgba(0, 0, 0, 0.03);
-  padding: 20px;
+  padding: 16px;
   border-radius: 18px;
-  margin-bottom: 24px;
+  margin-bottom: 0;
 }
 
 .settings-section-title {
@@ -360,7 +405,7 @@ body {
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .settings-section > .settings-row:first-child,
@@ -519,6 +564,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
+  margin-top: 18px;
 }
 
 .btn-cancel,
@@ -572,8 +618,40 @@ body {
   background: rgba(255, 255, 255, 0.35);
 }
 
+@media (max-width: 980px) {
+  .settings-overlay {
+    padding: 14px;
+  }
+
+  .settings-panel {
+    width: min(100%, 760px);
+    padding: 18px;
+    border-radius: 20px;
+    max-height: calc(100vh - 20px);
+  }
+
+  .settings-tabs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .settings-tab {
+    width: 100%;
+    text-align: center;
+  }
+
+  .settings-col {
+    gap: 12px;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   .settings-section { background: rgba(255, 255, 255, 0.03); }
+  .settings-tabs { background: rgba(255, 255, 255, 0.05); }
+  .settings-tab:hover { background: rgba(255, 255, 255, 0.08); }
+  .settings-tab.active { background: rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.95); }
   .settings-row input[type="text"] { background: rgba(255, 255, 255, 0.06); }
   .status-badge { background: rgba(255, 255, 255, 0.08); }
   .auth-device-box { background: rgba(255, 255, 255, 0.04); }

@@ -217,6 +217,12 @@ contextBridge.exposeInMainWorld("macos", {
     return () => ipcRenderer.removeListener("clips:changed", listener);
   },
 
+  onLocalSyncProgress: (cb) => {
+    const listener = (_evt, payload) => cb(payload);
+    ipcRenderer.on("local-sync:progress", listener);
+    return () => ipcRenderer.removeListener("local-sync:progress", listener);
+  },
+
   onWindowShown: (cb) => {
     const listener = (_evt, payload) => cb(payload);
     ipcRenderer.on("window:shown", listener);

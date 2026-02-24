@@ -630,9 +630,6 @@ const writeLocalDb = (db) => {
 };
 
 const syncLocalDbWithICloud = (cfg) => {
-  if (isRemoteEnabled(cfg)) {
-    return { ok: true, changed: false, reason: "remote-mode" };
-  }
   if (!isICloudSyncEnabled(cfg)) {
     return { ok: true, changed: false, reason: "disabled" };
   }
@@ -670,9 +667,10 @@ const syncLocalDbWithICloud = (cfg) => {
 
 const runICloudSyncIfNeeded = (cfg, { notify = false } = {}) => {
   const res = syncLocalDbWithICloud(cfg);
+  const isSkipped = Boolean(res?.ok && res?.reason === "disabled");
   iCloudSyncState = {
     lastSyncAt: Date.now(),
-    lastResult: res?.ok ? "ok" : (res?.reason === "disabled" || res?.reason === "remote-mode" ? "skipped" : "error"),
+    lastResult: isSkipped ? "skipped" : (res?.ok ? "ok" : "error"),
     lastMessage: String(res?.reason || "")
   };
   if (notify && res?.ok && res?.localChanged) {
@@ -806,6 +804,8 @@ const localCreateClip = (cfg, payload) => {
     contentHtml: payload?.contentHtml ?? null,
     sourceUrl: payload?.sourceUrl ?? null,
     imageDataUrl: payload?.imageDataUrl ?? null,
+    imagePreviewDataUrl: payload?.imagePreviewDataUrl ?? null,
+    imageUrl: payload?.imageUrl ?? null,
     isFavorite: Boolean(payload?.isFavorite),
     isDeleted: false,
     tags: Array.isArray(payload?.tags) ? payload.tags : [],
@@ -1239,17 +1239,27 @@ const remoteRequest = async (cfg, pathname, init = {}) => {
 
 const createClipFromPayload = async (payload, source = "watcher") => {
   const cfg = readConfig();
+  const now = Date.now();
+  const clipId = String(payload?.id || randomUUID());
   const body = {
     ...payload,
+    id: clipId,
+    clientUpdatedAt: Number(payload?.clientUpdatedAt || now),
     tags: source === "watcher" ? ["auto"] : payload.tags || []
   };
+  const remoteEnabled = isRemoteEnabled(cfg);
+  const shouldWriteLocal = !remoteEnabled || isICloudSyncEnabled(cfg);
+  let localResult = null;
 
-  if (!isRemoteEnabled(cfg)) {
-    const res = localCreateClip(cfg, body);
-    if (res.ok) {
+  if (shouldWriteLocal) {
+    localResult = localCreateClip(cfg, body);
+  }
+
+  if (!remoteEnabled) {
+    if (localResult?.ok) {
       return { ok: true, captured: true };
     }
-    return { ok: false, captured: false, reason: res.message || "capture failed" };
+    return { ok: false, captured: false, reason: localResult?.message || "capture failed" };
   }
 
   const res = await remoteRequest(cfg, "/clips", {
@@ -1259,6 +1269,14 @@ const createClipFromPayload = async (payload, source = "watcher") => {
 
   if (res && res.ok) {
     return { ok: true, captured: true };
+  }
+
+  if (localResult?.ok) {
+    return {
+      ok: true,
+      captured: true,
+      degraded: true
+    };
   }
 
   return {
@@ -1922,7 +1940,7 @@ const startICloudSyncWatcher = () => {
   }
   iCloudSyncTimer = setInterval(() => {
     const cfg = readConfig();
-    if (!isICloudSyncEnabled(cfg) || isRemoteEnabled(cfg)) {
+    if (!isICloudSyncEnabled(cfg)) {
       return;
     }
     runICloudSyncIfNeeded(cfg, { notify: true });
@@ -1935,14 +1953,12 @@ const setupIpc = () => {
   ipcMain.handle("config:set", async (_, next) => {
     const merged = writeConfig({ ...readConfig(), ...(next || {}) });
     let settingsMessage = "";
-    // Apply retention cleanup in local mode.
-    if (!isRemoteEnabled(merged)) {
-      writeLocalDb(cleanupLocalDb(merged, readLocalDb()));
-      if (isICloudSyncEnabled(merged)) {
-        const syncRes = runICloudSyncIfNeeded(merged, { notify: true });
-        if (!syncRes?.ok && syncRes?.reason === "icloud-unavailable") {
-          settingsMessage = "iCloud Drive unavailable. Please enable iCloud Drive in macOS Settings.";
-        }
+    // Always maintain local cache cleanup so iCloud sync can coexist with API mode.
+    writeLocalDb(cleanupLocalDb(merged, readLocalDb()));
+    if (isICloudSyncEnabled(merged)) {
+      const syncRes = runICloudSyncIfNeeded(merged, { notify: true });
+      if (!syncRes?.ok && syncRes?.reason === "icloud-unavailable") {
+        settingsMessage = "iCloud Drive unavailable. Please enable iCloud Drive in macOS Settings.";
       }
     }
     try {
@@ -1957,7 +1973,13 @@ const setupIpc = () => {
       writeConfig({ ...merged, hotkey: hk.hotkey });
     }
     const message = [hk.message, settingsMessage].filter(Boolean).join("\n");
-    return { ok: hk.ok, message: message || undefined };
+    return {
+      ok: true,
+      message: message || undefined,
+      hotkeyOk: Boolean(hk.ok),
+      hotkey: hk.hotkey || merged.hotkey,
+      hotkeyCorrected: Boolean(hk.corrected)
+    };
   });
 
   ipcMain.handle("icloud:status", async () => {
@@ -1976,9 +1998,6 @@ const setupIpc = () => {
     const cfg = readConfig();
     if (!isICloudSyncEnabled(cfg)) {
       return localFail("Please enable iCloud Drive Sync first");
-    }
-    if (isRemoteEnabled(cfg)) {
-      return localFail("iCloud local sync is available only when API Endpoint is empty");
     }
     const res = runICloudSyncIfNeeded(cfg, { notify: true });
     if (!res?.ok) {
@@ -2156,8 +2175,27 @@ const setupIpc = () => {
     }
 
     const pending = listPendingLocalSyncClips(cfg);
+    const total = pending.length;
+    const emitProgress = (phase, uploaded, failed) => {
+      const safeUploaded = Math.max(0, Number(uploaded || 0));
+      const safeFailed = Math.max(0, Number(failed || 0));
+      const processed = Math.max(0, Math.min(total, safeUploaded + safeFailed));
+      const percent = total <= 0 ? 100 : Math.max(0, Math.min(100, Math.round((processed / total) * 100)));
+      broadcastToWindows("local-sync:progress", {
+        phase,
+        total,
+        uploaded: safeUploaded,
+        failed: safeFailed,
+        processed,
+        percent,
+        at: Date.now()
+      });
+    };
+
+    emitProgress("start", 0, 0);
     if (pending.length === 0) {
       writeConfig(withLocalSyncDecision(cfg, userId, "imported"));
+      emitProgress("done", 0, 0);
       return localOk({
         total: 0,
         uploaded: 0,
@@ -2190,14 +2228,16 @@ const setupIpc = () => {
       } else {
         failed += 1;
       }
+      emitProgress("progress", uploaded, failed);
     }
 
     if (failed === 0) {
       writeConfig(withLocalSyncDecision(cfg, userId, "imported"));
     }
+    emitProgress("done", uploaded, failed);
 
     return localOk({
-      total: pending.length,
+      total,
       uploaded,
       failed
     });
@@ -2214,7 +2254,14 @@ const setupIpc = () => {
     if (query.favorite) params.set("favorite", "1");
     params.set("limit", "60");
     params.set("lite", "1");
-    return remoteRequest(cfg, `/clips?${params.toString()}`);
+    const remoteRes = await remoteRequest(cfg, `/clips?${params.toString()}`);
+    if (remoteRes?.ok) {
+      return remoteRes;
+    }
+    if (isICloudSyncEnabled(cfg)) {
+      return localListClips(cfg, query);
+    }
+    return remoteRes;
   });
 
   ipcMain.handle("clips:get", async (_, id) => {
@@ -2239,32 +2286,41 @@ const setupIpc = () => {
 
   ipcMain.handle("clips:create", async (_, payload) => {
     const cfg = readConfig();
+    const now = Date.now();
+    const clipId = String(payload?.id || randomUUID());
+    const body = {
+      id: clipId,
+      content: payload?.content || "",
+      summary: payload?.summary,
+      type: payload?.type,
+      contentHtml: payload?.contentHtml ?? null,
+      sourceUrl: payload?.sourceUrl ?? null,
+      imageDataUrl: payload?.imageDataUrl ?? null,
+      imagePreviewDataUrl: payload?.imagePreviewDataUrl ?? null,
+      imageUrl: payload?.imageUrl ?? null,
+      tags: payload?.tags || [],
+      clientUpdatedAt: now
+    };
     if (!isRemoteEnabled(cfg)) {
-      return localCreateClip(cfg, {
-        content: payload?.content || "",
-        summary: payload?.summary,
-        type: payload?.type,
-        contentHtml: payload?.contentHtml ?? null,
-        sourceUrl: payload?.sourceUrl ?? null,
-        imageDataUrl: payload?.imageDataUrl ?? null,
-        tags: payload?.tags || [],
-        clientUpdatedAt: Date.now()
-      });
+      return localCreateClip(cfg, body);
     }
 
-    return remoteRequest(cfg, "/clips", {
+    let localRes = null;
+    if (isICloudSyncEnabled(cfg)) {
+      localRes = localCreateClip(cfg, body);
+    }
+
+    const remoteRes = await remoteRequest(cfg, "/clips", {
       method: "POST",
-      body: JSON.stringify({
-        content: payload?.content || "",
-        summary: payload?.summary,
-        type: payload?.type,
-        contentHtml: payload?.contentHtml ?? null,
-        sourceUrl: payload?.sourceUrl ?? null,
-        imageDataUrl: payload?.imageDataUrl ?? null,
-        tags: payload?.tags || [],
-        clientUpdatedAt: Date.now()
-      })
+      body: JSON.stringify(body)
     });
+    if (remoteRes?.ok) {
+      return remoteRes;
+    }
+    if (localRes?.ok) {
+      return localRes;
+    }
+    return remoteRes;
   });
 
   ipcMain.handle("clips:favorite", async (_, id, isFavorite) => {
@@ -2514,13 +2570,11 @@ app.on("ready", async () => {
   // Create tray first so the app is still reachable even if the renderer fails to load.
   createTray();
 
-  // Run a retention cleanup at startup in local mode.
+  // Always maintain local cache cleanup at startup.
   const cfg = readConfig();
-  if (!isRemoteEnabled(cfg)) {
-    writeLocalDb(cleanupLocalDb(cfg, readLocalDb()));
-    if (isICloudSyncEnabled(cfg)) {
-      runICloudSyncIfNeeded(cfg);
-    }
+  writeLocalDb(cleanupLocalDb(cfg, readLocalDb()));
+  if (isICloudSyncEnabled(cfg)) {
+    runICloudSyncIfNeeded(cfg);
   }
 
   await ensureMainWindow();

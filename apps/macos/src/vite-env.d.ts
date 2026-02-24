@@ -25,7 +25,13 @@ declare global {
         launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
         hotkey: string;
-      }) => Promise<{ ok: boolean; message?: string }>;
+      }) => Promise<{
+        ok: boolean;
+        message?: string;
+        hotkeyOk?: boolean;
+        hotkey?: string | null;
+        hotkeyCorrected?: boolean;
+      }>;
       getICloudSyncStatus: () => Promise<{
         ok: boolean;
         data?: {
@@ -96,6 +102,15 @@ declare global {
       captureWindow: () => Promise<{ ok: boolean; dataUrl?: string; message?: string }>;
       onOpenSettings: (cb: (payload: { at?: number } | undefined) => void) => () => void;
       onClipsChanged: (cb: (payload: { source?: string; at?: number } | undefined) => void) => () => void;
+      onLocalSyncProgress: (cb: (payload: {
+        phase?: "start" | "progress" | "done";
+        total?: number;
+        uploaded?: number;
+        failed?: number;
+        processed?: number;
+        percent?: number;
+        at?: number;
+      } | undefined) => void) => () => void;
       onWindowShown: (cb: (payload: { at?: number } | undefined) => void) => () => void;
       onWindowHidden: (cb: (payload: { at?: number } | undefined) => void) => () => void;
     };

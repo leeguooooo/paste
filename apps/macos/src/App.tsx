@@ -59,6 +59,18 @@ type ICloudSyncStatus = {
   lastMessage: string;
 };
 
+type LocalSyncProgress = {
+  phase: "start" | "progress" | "done";
+  total: number;
+  uploaded: number;
+  failed: number;
+  processed: number;
+  percent: number;
+  at: number;
+};
+
+type SettingsTab = "sync" | "account" | "system";
+
 const emptyConfig: AppConfig = {
   apiBase: "",
   userId: "mac_user_demo",
@@ -360,6 +372,7 @@ export default function App() {
   const [icloudSyncMessage, setIcloudSyncMessage] = useState("");
   const [localSyncPendingCount, setLocalSyncPendingCount] = useState(0);
   const [localSyncLoading, setLocalSyncLoading] = useState(false);
+  const [localSyncProgress, setLocalSyncProgress] = useState<LocalSyncProgress | null>(null);
   const [deviceAuthSession, setDeviceAuthSession] = useState<DeviceAuthSession | null>(null);
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -367,6 +380,7 @@ export default function App() {
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("sync");
   const [settingsBackdropDataUrl, setSettingsBackdropDataUrl] = useState<string | null>(null);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -382,7 +396,11 @@ export default function App() {
     const map = new Map<string, string>();
     for (const clip of clips) {
       if (!clip?.id) continue;
-      const text = clip.contentHtml ? htmlToText(clip.contentHtml) : clip.content;
+      const textFromHtml = clip.contentHtml ? htmlToText(clip.contentHtml) : "";
+      const textFromContent = String(clip.content || "").trim();
+      const textFromSummary = String(clip.summary || "").trim();
+      const textFromSourceUrl = String(clip.sourceUrl || "").trim();
+      const text = textFromHtml || textFromContent || textFromSummary || textFromSourceUrl;
       map.set(clip.id, (text || "").slice(0, 300));
     }
     return map;
@@ -633,6 +651,7 @@ export default function App() {
       setDeviceAuthSession(null);
       setAuthMessage("Signed out.");
       setLocalSyncPendingCount(0);
+      setLocalSyncProgress(null);
       await loadConfig();
       await loadAuthStatus();
       await loadICloudSyncStatus();
@@ -646,6 +665,15 @@ export default function App() {
 
   const syncLocalHistoryNow = useCallback(async () => {
     setLocalSyncLoading(true);
+    setLocalSyncProgress({
+      phase: "start",
+      total: Math.max(0, Number(localSyncPendingCount || 0)),
+      uploaded: 0,
+      failed: 0,
+      processed: 0,
+      percent: 0,
+      at: Date.now()
+    });
     try {
       const res = await window.macos.runLocalSync();
       if (!res?.ok || !res?.data) {
@@ -653,6 +681,17 @@ export default function App() {
         return;
       }
       const { total, uploaded, failed } = res.data;
+      const processed = Math.max(0, Math.min(total, uploaded + failed));
+      const percent = total <= 0 ? 100 : Math.max(0, Math.min(100, Math.round((processed / total) * 100)));
+      setLocalSyncProgress({
+        phase: "done",
+        total,
+        uploaded,
+        failed,
+        processed,
+        percent,
+        at: Date.now()
+      });
       if (failed > 0) {
         setAuthMessage(`Synced ${uploaded}/${total}. ${failed} items failed. You can retry.`);
       } else {
@@ -665,7 +704,7 @@ export default function App() {
     } finally {
       setLocalSyncLoading(false);
     }
-  }, [loadClips, loadLocalSyncStatus]);
+  }, [loadClips, loadLocalSyncStatus, localSyncPendingCount]);
 
   const dismissLocalSyncPrompt = useCallback(async () => {
     setLocalSyncLoading(true);
@@ -676,6 +715,7 @@ export default function App() {
         return;
       }
       setLocalSyncPendingCount(0);
+      setLocalSyncProgress(null);
       setAuthMessage("Skipped local history sync.");
     } catch (e) {
       setAuthMessage(e instanceof Error ? e.message : "Failed to update sync preference.");
@@ -688,7 +728,36 @@ export default function App() {
     setIcloudSyncLoading(true);
     setIcloudSyncMessage("");
     try {
-      const res = await window.macos.runICloudSync();
+      if (!config.icloudSync) {
+        setIcloudSyncMessage("Please enable iCloud Drive Sync first.");
+        await loadICloudSyncStatus();
+        return;
+      }
+
+      const persistPayload = authStatus.authenticated
+        ? {
+            ...toConfigPayload(config),
+            userId: authStatus.user?.userId || config.userId,
+            authGithubLogin: authStatus.user?.githubLogin || config.authGithubLogin
+          }
+        : toConfigPayload(config);
+      const saveRes = await window.macos.setConfig(persistPayload);
+      if (!saveRes?.ok) {
+        setIcloudSyncMessage(String(saveRes?.message || "Failed to save settings before iCloud sync."));
+        await loadICloudSyncStatus();
+        return;
+      }
+
+      const runICloudSyncFn = (window.macos as any)?.runICloudSync;
+      if (typeof runICloudSyncFn !== "function") {
+        setIcloudSyncMessage(
+          "Current app runtime is outdated (missing iCloud sync bridge). Please fully quit and reopen Pastyx, then try again."
+        );
+        await loadICloudSyncStatus();
+        return;
+      }
+
+      const res = await runICloudSyncFn();
       if (!res?.ok || !res.data) {
         setIcloudSyncMessage(String(res?.message || "iCloud sync failed."));
         await loadICloudSyncStatus();
@@ -704,7 +773,7 @@ export default function App() {
     } finally {
       setIcloudSyncLoading(false);
     }
-  }, [loadClips, loadICloudSyncStatus]);
+  }, [authStatus.authenticated, authStatus.user, config, loadClips, loadICloudSyncStatus, toConfigPayload]);
 
   const copyText = useCallback(async (raw: string, label: string) => {
     const text = String(raw || "").trim();
@@ -755,10 +824,40 @@ export default function App() {
   useEffect(() => {
     if (!authStatus.authenticated) {
       setLocalSyncPendingCount(0);
+      setLocalSyncProgress(null);
       return;
     }
     void loadLocalSyncStatus();
   }, [authStatus.authenticated, loadLocalSyncStatus]);
+
+  useEffect(() => {
+    const off = window.macos.onLocalSyncProgress?.((payload) => {
+      if (!payload || typeof payload !== "object") return;
+      const phase = payload.phase;
+      if (phase !== "start" && phase !== "progress" && phase !== "done") return;
+      const total = Math.max(0, Number(payload.total || 0));
+      const uploaded = Math.max(0, Number(payload.uploaded || 0));
+      const failed = Math.max(0, Number(payload.failed || 0));
+      const processed = Math.max(0, Number(payload.processed || uploaded + failed));
+      const percent = Math.max(0, Math.min(100, Number(payload.percent || 0)));
+      setLocalSyncProgress({
+        phase,
+        total,
+        uploaded,
+        failed,
+        processed,
+        percent,
+        at: Number(payload.at || Date.now())
+      });
+    });
+    return () => {
+      try {
+        off?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
 
   useEffect(() => () => {
     clearAuthPollTimer();
@@ -830,6 +929,7 @@ export default function App() {
 
   const openSettings = useCallback(async () => {
     if (showSettings) return;
+    setSettingsTab("sync");
     setSettingsBackdropDataUrl(null);
 
     try {
@@ -1150,12 +1250,15 @@ export default function App() {
     if (preview) {
       return <img src={preview} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />;
     }
-    return <div className="preview-text">{previewTextById.get(clip.id) ?? ""}</div>;
+    const fallbackText =
+      previewTextById.get(clip.id) ||
+      String(clip.summary || "").trim() ||
+      String(clip.sourceUrl || "").trim() ||
+      String(clip.content || "").trim();
+    return <div className="preview-text">{fallbackText}</div>;
   };
 
   const effectiveUserId = authStatus.user?.userId || config.userId;
-  const remoteModeEnabled = /^https?:\/\//i.test(String(config.apiBase || "").trim());
-  const canRunICloudSyncNow = config.icloudSync && !remoteModeEnabled;
   const showDemo = !favoriteOnly && !loading && clips.length === 0 && query.trim() === "";
   const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, config.deviceId) : clips;
 
@@ -1322,237 +1425,297 @@ export default function App() {
               </button>
             </div>
             
-	            <div className="settings-section">
-	              <div className="settings-section-title">
-	                <Globe size={12} /> Connection
-	              </div>
-		              <div className="settings-row">
-			                <label>API Endpoint</label>
-			                <input
-                  type="text"
-                  placeholder="https://api.example.com/v1"
-                  value={config.apiBase}
-                  onChange={e => setConfig({ ...config, apiBase: e.target.value })}
-                />
-              </div>
-              <div className="settings-row">
-                <label>iCloud Drive Sync (No API)</label>
-                <div className="checkbox-row" style={{ marginTop: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={config.icloudSync}
-                    onChange={e => setConfig({ ...config, icloudSync: e.target.checked })}
-                  />
-                  Enable iCloud sync in local mode
-                </div>
-                {!config.icloudAvailable ? (
-                  <div className="auth-message">
-                    iCloud availability is not confirmed yet. You can still enable and click "Sync iCloud now" to initialize.
-                  </div>
-                ) : null}
-                {config.icloudSync ? (
-                  <div className="auth-device-hint">
-                    Keep API Endpoint empty to use local + iCloud Drive sync only.
-                  </div>
-                ) : null}
-                <div className="auth-device-hint">
-                  Last sync: {formatSyncTime(icloudSyncStatus.lastSyncAt)}
-                  {icloudSyncStatus.lastResult === "error" ? " (error)" : ""}
-                </div>
-                <div className="inline-field-actions" style={{ marginTop: 8 }}>
-                  <button
-                    className="btn-cancel"
-                    type="button"
-                    onClick={() => void runICloudSyncNow()}
-                    disabled={icloudSyncLoading || !canRunICloudSyncNow}
-                  >
-                    {icloudSyncLoading ? "Syncing..." : "Sync iCloud now"}
-                  </button>
-                </div>
-                {!canRunICloudSyncNow && config.icloudSync && remoteModeEnabled ? (
-                  <div className="auth-message">
-                    iCloud local sync is disabled while API Endpoint is set.
-                  </div>
-                ) : null}
-                {icloudSyncMessage ? (
-                  <div className="auth-message">{icloudSyncMessage}</div>
-                ) : null}
-              </div>
-              <div className="settings-row">
-                <label>GitHub Auth</label>
-                {authStatus.authenticated && authStatus.user ? (
-                  <div className="inline-field-actions">
-                    <span className="status-badge">@{authStatus.user.githubLogin}</span>
-                    <button
-                      className="btn-cancel"
-                      type="button"
-                      onClick={() => void logoutGithubAuth()}
-                      disabled={authLoading}
-                    >
-                      {authLoading ? "..." : "Sign out"}
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    className="btn-save"
-                    type="button"
-                    onClick={() => void startGithubAuth()}
-                    disabled={authLoading || !/^https?:\/\//i.test(String(config.apiBase || "").trim())}
-                  >
-                    {!/^https?:\/\//i.test(String(config.apiBase || "").trim())
-                      ? "Set API first"
-                      : (authLoading ? "Starting..." : "Sign in with GitHub")}
-                  </button>
-                )}
-              </div>
-              {deviceAuthSession && (
-                <div className="auth-device-box">
-                  <div className="auth-device-title">Authorize this device</div>
-                  <div className="auth-device-code" title={deviceAuthSession.userCode}>
-                    {deviceAuthSession.userCode}
-                  </div>
-                  <div className="auth-device-actions">
-                    <button className="btn-save" type="button" onClick={() => void openGithubVerificationPage()}>
-                      <ExternalLink size={14} />
-                      Open GitHub
-                    </button>
-                    <button
-                      className="btn-cancel"
-                      type="button"
-                      onClick={() => void copyText(deviceAuthSession.userCode, "Code")}
-                    >
-                      <Copy size={14} />
-                      Copy code
-                    </button>
-                  </div>
-                  <div className="auth-device-hint">
-                    If GitHub page does not auto-open, use Open GitHub above.
+            <div className="settings-tabs" role="tablist" aria-label="Settings categories">
+              <button
+                type="button"
+                className={`settings-tab ${settingsTab === "sync" ? "active" : ""}`}
+                onClick={() => setSettingsTab("sync")}
+              >
+                Cloud & Sync
+              </button>
+              <button
+                type="button"
+                className={`settings-tab ${settingsTab === "account" ? "active" : ""}`}
+                onClick={() => setSettingsTab("account")}
+              >
+                Account
+              </button>
+              <button
+                type="button"
+                className={`settings-tab ${settingsTab === "system" ? "active" : ""}`}
+                onClick={() => setSettingsTab("system")}
+              >
+                System
+              </button>
+            </div>
+
+            <div className="settings-tab-content">
+              {settingsTab === "sync" && (
+                <div className="settings-col">
+                  <div className="settings-section">
+                    <div className="settings-section-title">
+                      <Globe size={12} /> Connection
+                    </div>
+                    <div className="settings-row">
+                      <label>API Endpoint</label>
+                      <input
+                        type="text"
+                        placeholder="https://api.example.com/v1"
+                        value={config.apiBase}
+                        onChange={e => setConfig({ ...config, apiBase: e.target.value })}
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <label>iCloud Drive Sync</label>
+                      <div className="checkbox-row" style={{ marginTop: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={config.icloudSync}
+                          onChange={e => setConfig({ ...config, icloudSync: e.target.checked })}
+                        />
+                        Enable iCloud sync
+                      </div>
+                      {!config.icloudAvailable ? (
+                        <div className="auth-message">
+                          iCloud availability is not confirmed yet. You can still enable and click "Sync iCloud now" to initialize.
+                        </div>
+                      ) : null}
+                      {config.icloudSync ? (
+                        <div className="auth-device-hint">
+                          Works in both modes: local-only and API + GitHub login.
+                        </div>
+                      ) : null}
+                      <div className="auth-device-hint">
+                        Last sync: {formatSyncTime(icloudSyncStatus.lastSyncAt)}
+                        {icloudSyncStatus.lastResult === "error" ? " (error)" : ""}
+                      </div>
+                      <div className="inline-field-actions" style={{ marginTop: 8 }}>
+                        <button
+                          className="btn-cancel"
+                          type="button"
+                          onClick={() => void runICloudSyncNow()}
+                          disabled={icloudSyncLoading}
+                        >
+                          {icloudSyncLoading ? "Syncing..." : "Sync iCloud now"}
+                        </button>
+                      </div>
+                      {icloudSyncMessage ? (
+                        <div className="auth-message">{icloudSyncMessage}</div>
+                      ) : null}
+                    </div>
+                    <div className="settings-row">
+                      <label>GitHub Auth</label>
+                      {authStatus.authenticated && authStatus.user ? (
+                        <div className="inline-field-actions">
+                          <span className="status-badge">@{authStatus.user.githubLogin}</span>
+                          <button
+                            className="btn-cancel"
+                            type="button"
+                            onClick={() => void logoutGithubAuth()}
+                            disabled={authLoading}
+                          >
+                            {authLoading ? "..." : "Sign out"}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="btn-save"
+                          type="button"
+                          onClick={() => void startGithubAuth()}
+                          disabled={authLoading || !/^https?:\/\//i.test(String(config.apiBase || "").trim())}
+                        >
+                          {!/^https?:\/\//i.test(String(config.apiBase || "").trim())
+                            ? "Set API first"
+                            : (authLoading ? "Starting..." : "Sign in with GitHub")}
+                        </button>
+                      )}
+                    </div>
+                    {deviceAuthSession && (
+                      <div className="auth-device-box">
+                        <div className="auth-device-title">Authorize this device</div>
+                        <div className="auth-device-code" title={deviceAuthSession.userCode}>
+                          {deviceAuthSession.userCode}
+                        </div>
+                        <div className="auth-device-actions">
+                          <button className="btn-save" type="button" onClick={() => void openGithubVerificationPage()}>
+                            <ExternalLink size={14} />
+                            Open GitHub
+                          </button>
+                          <button
+                            className="btn-cancel"
+                            type="button"
+                            onClick={() => void copyText(deviceAuthSession.userCode, "Code")}
+                          >
+                            <Copy size={14} />
+                            Copy code
+                          </button>
+                        </div>
+                        <div className="auth-device-hint">
+                          If GitHub page does not auto-open, use Open GitHub above.
+                        </div>
+                      </div>
+                    )}
+                    {authMessage ? (
+                      <div className="auth-message">{authMessage}</div>
+                    ) : null}
+                    {authStatus.authenticated && localSyncPendingCount > 0 ? (
+                      <div className="auth-device-box">
+                        <div className="auth-device-title">Sync local history to cloud?</div>
+                        <div className="auth-device-hint">
+                          Found {localSyncPendingCount} local clips captured before sign-in.
+                        </div>
+                        {localSyncProgress && localSyncLoading ? (
+                          <div className="auth-device-hint">
+                            Progress: {localSyncProgress.percent}% ({localSyncProgress.processed}/{localSyncProgress.total}, ok {localSyncProgress.uploaded}, failed {localSyncProgress.failed})
+                          </div>
+                        ) : null}
+                        <div className="auth-device-actions">
+                          <button
+                            className="btn-save"
+                            type="button"
+                            onClick={() => void syncLocalHistoryNow()}
+                            disabled={localSyncLoading}
+                          >
+                            {localSyncLoading
+                              ? (localSyncProgress && localSyncProgress.total > 0
+                                ? `Syncing ${localSyncProgress.percent}%...`
+                                : "Syncing...")
+                              : "Sync now"}
+                          </button>
+                          <button
+                            className="btn-cancel"
+                            type="button"
+                            onClick={() => void dismissLocalSyncPrompt()}
+                            disabled={localSyncLoading}
+                          >
+                            Not now
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               )}
-              {authMessage ? (
-                <div className="auth-message">{authMessage}</div>
-              ) : null}
-              {authStatus.authenticated && localSyncPendingCount > 0 ? (
-                <div className="auth-device-box">
-                  <div className="auth-device-title">Sync local history to cloud?</div>
-                  <div className="auth-device-hint">
-                    Found {localSyncPendingCount} local clips captured before sign-in.
+
+              {settingsTab === "account" && (
+                <div className="settings-col">
+                  <div className="settings-section">
+                    <div className="settings-section-title">
+                      <Cpu size={12} /> Identity
+                    </div>
+                    <div className="settings-row">
+                      <label>Account User ID</label>
+                      <div className="inline-field-actions">
+                        <input type="text" value={effectiveUserId} readOnly />
+                        <button
+                          className="btn-cancel"
+                          type="button"
+                          onClick={() => void copyText(effectiveUserId, "User ID")}
+                        >
+                          <Copy size={14} />
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    {!authStatus.authenticated ? (
+                      <div className="auth-device-hint">
+                        Sign in with GitHub in Cloud & Sync to bind this device with your cloud account.
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="auth-device-actions">
-                    <button
-                      className="btn-save"
-                      type="button"
-                      onClick={() => void syncLocalHistoryNow()}
-                      disabled={localSyncLoading}
-                    >
-                      {localSyncLoading ? "Syncing..." : "Sync now"}
-                    </button>
-                    <button
-                      className="btn-cancel"
-                      type="button"
-                      onClick={() => void dismissLocalSyncPrompt()}
-                      disabled={localSyncLoading}
-                    >
-                      Not now
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              {authStatus.authenticated && (
-                <div className="settings-row">
-                  <label>Account User ID</label>
-                  <div className="inline-field-actions">
-                    <input type="text" value={effectiveUserId} readOnly />
-                    <button
-                      className="btn-cancel"
-                      type="button"
-                      onClick={() => void copyText(effectiveUserId, "User ID")}
-                    >
-                      <Copy size={14} />
-                      Copy
-                    </button>
+
+                  <div className="settings-section">
+                    <div className="settings-section-title">
+                      <Cpu size={12} /> Device
+                    </div>
+                    <div className="settings-row">
+                      <label>Device ID</label>
+                      <div className="inline-field-actions">
+                        <input type="text" value={config.deviceId} readOnly />
+                        <button
+                          className="btn-cancel"
+                          type="button"
+                          onClick={() => void copyText(config.deviceId, "Device ID")}
+                        >
+                          <Copy size={14} />
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    <div className="settings-row">
+                      <label>Regenerate Device</label>
+                      <button className="btn-cancel" type="button" onClick={resetDeviceId}>
+                        New Device ID
+                      </button>
+                    </div>
+                    {authMessage ? (
+                      <div className="auth-message">{authMessage}</div>
+                    ) : null}
                   </div>
                 </div>
               )}
-              <div className="settings-row">
-                <label>Regenerate Device</label>
-                <button className="btn-cancel" type="button" onClick={resetDeviceId}>
-                  New Device ID
-                </button>
-              </div>
-            </div>
 
-	            <div className="settings-section">
-	              <div className="settings-section-title">
-	                <Cpu size={12} /> System
-	              </div>
-              <div className="settings-row">
-                <label>Global Hotkey</label>
-                <input
-                  type="text"
-                  value={config.hotkey}
-                  onChange={e => setConfig({ ...config, hotkey: e.target.value })}
-                />
-              </div>
-              <div className="settings-row">
-                <label>Device ID</label>
-                <div className="inline-field-actions">
-                  <input type="text" value={config.deviceId} readOnly />
-                  <button
-                    className="btn-cancel"
-                    type="button"
-                    onClick={() => void copyText(config.deviceId, "Device ID")}
-                  >
-                    <Copy size={14} />
-                    Copy
-                  </button>
-                </div>
-              </div>
-              <div className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={config.launchAtLogin}
-                  onChange={e => setConfig({ ...config, launchAtLogin: e.target.checked })}
-                />
-                Launch at login
-              </div>
-            </div>
-
-		            <div className="settings-section">
-		              <div className="settings-section-title">
-		                <Monitor size={12} /> Capture
-		              </div>
-		              <div className="checkbox-row">
-		                <input
-		                  type="checkbox"
-		                  checked={config.autoCapture}
-		                  onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}
-		                />
-		                Auto-capture clipboard history
-		              </div>
-		            </div>
-
-                <div className="settings-section">
-                  <div className="settings-section-title">
-                    <ArrowRight size={12} /> Retention
+              {settingsTab === "system" && (
+                <div className="settings-col">
+                  <div className="settings-section">
+                    <div className="settings-section-title">
+                      <Cpu size={12} /> System
+                    </div>
+                    <div className="settings-row">
+                      <label>Global Hotkey</label>
+                      <input
+                        type="text"
+                        value={config.hotkey}
+                        onChange={e => setConfig({ ...config, hotkey: e.target.value })}
+                      />
+                    </div>
+                    <div className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={config.launchAtLogin}
+                        onChange={e => setConfig({ ...config, launchAtLogin: e.target.checked })}
+                      />
+                      Launch at login
+                    </div>
                   </div>
-                  <div className="settings-row">
-                    <label>History retention</label>
-                    <select
-                      value={config.retention}
-                      onChange={e => setConfig({ ...config, retention: e.target.value as AppConfig["retention"] })}
-                    >
-                      <option value="30d">30 days</option>
-                      <option value="180d">180 days</option>
-                      <option value="365d">365 days</option>
-                      <option value="forever">Forever</option>
-                    </select>
+
+                  <div className="settings-section">
+                    <div className="settings-section-title">
+                      <Monitor size={12} /> Capture
+                    </div>
+                    <div className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={config.autoCapture}
+                        onChange={e => setConfig({ ...config, autoCapture: e.target.checked })}
+                      />
+                      Auto-capture clipboard history
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8, lineHeight: 1.35 }}>
-                    Applies to local mode. Favorites are always kept.
+
+                  <div className="settings-section">
+                    <div className="settings-section-title">
+                      <ArrowRight size={12} /> Retention
+                    </div>
+                    <div className="settings-row">
+                      <label>History retention</label>
+                      <select
+                        value={config.retention}
+                        onChange={e => setConfig({ ...config, retention: e.target.value as AppConfig["retention"] })}
+                      >
+                        <option value="30d">30 days</option>
+                        <option value="180d">180 days</option>
+                        <option value="365d">365 days</option>
+                        <option value="forever">Forever</option>
+                      </select>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8, lineHeight: 1.35 }}>
+                      Applies to local mode. Favorites are always kept.
+                    </div>
                   </div>
                 </div>
+              )}
+            </div>
 
 	            <div className="settings-actions">
 	              <button className="btn-cancel" onClick={closeSettings}>Cancel</button>
