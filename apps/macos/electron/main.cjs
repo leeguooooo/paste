@@ -377,6 +377,8 @@ const defaultConfig = {
   apiBase: "",
   userId: "mac_user_demo",
   deviceId: "macos_desktop",
+  authToken: "",
+  authGithubLogin: "",
   autoCapture: true,
   launchAtLogin: false,
   // Default retention options: 30d / 180d / 365d / forever
@@ -405,6 +407,21 @@ const writeConfig = (next) => {
 };
 
 const isRemoteEnabled = (cfg) => typeof cfg?.apiBase === "string" && /^https?:\/\//i.test(cfg.apiBase.trim());
+const isTokenAuthEnabled = (cfg) => typeof cfg?.authToken === "string" && cfg.authToken.trim().length > 0;
+
+const getConfigForRenderer = () => {
+  const cfg = readConfig();
+  return {
+    apiBase: cfg.apiBase,
+    userId: cfg.userId,
+    deviceId: cfg.deviceId,
+    authGithubLogin: cfg.authGithubLogin || "",
+    autoCapture: Boolean(cfg.autoCapture),
+    launchAtLogin: Boolean(cfg.launchAtLogin),
+    retention: cfg.retention,
+    hotkey: cfg.hotkey
+  };
+};
 
 const localOk = (data) => ({ ok: true, data });
 const localFail = (message) => ({ ok: false, code: "LOCAL_ERROR", message });
@@ -889,15 +906,29 @@ const probeClipboardFingerprint = () => {
   ].join("|");
 };
 
+const buildRemoteHeaders = (cfg, extra = {}) => {
+  const authHeaders = isTokenAuthEnabled(cfg)
+    ? {
+        authorization: `Bearer ${cfg.authToken.trim()}`,
+        "x-device-id": cfg.deviceId
+      }
+    : {
+        "x-user-id": cfg.userId,
+        "x-device-id": cfg.deviceId
+      };
+  return {
+    ...authHeaders,
+    ...(extra || {})
+  };
+};
+
 const remoteRequest = async (cfg, pathname, init = {}) => {
   const base = cfg.apiBase.trim().replace(/\/$/g, "");
   const url = `${base}${pathname}`;
-  const headers = {
+  const headers = buildRemoteHeaders(cfg, {
     "content-type": "application/json",
-    "x-user-id": cfg.userId,
-    "x-device-id": cfg.deviceId,
     ...(init.headers || {})
-  };
+  });
 
   try {
     const response = await fetch(url, { ...init, headers });
@@ -1574,10 +1605,10 @@ const startClipboardWatcher = () => {
 };
 
 const setupIpc = () => {
-  ipcMain.handle("config:get", async () => readConfig());
+  ipcMain.handle("config:get", async () => getConfigForRenderer());
 
   ipcMain.handle("config:set", async (_, next) => {
-    const merged = writeConfig(next || {});
+    const merged = writeConfig({ ...readConfig(), ...(next || {}) });
     // Apply retention cleanup in local mode.
     if (!isRemoteEnabled(merged)) {
       writeLocalDb(cleanupLocalDb(merged, readLocalDb()));
@@ -1594,6 +1625,134 @@ const setupIpc = () => {
       writeConfig({ ...merged, hotkey: hk.hotkey });
     }
     return { ok: hk.ok, message: hk.message };
+  });
+
+  ipcMain.handle("auth:status", async () => {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localOk({
+        remoteEnabled: false,
+        authenticated: false,
+        authConfigured: false,
+        user: null
+      });
+    }
+
+    const res = await remoteRequest(cfg, "/auth/me");
+    if (!res?.ok) {
+      return res;
+    }
+
+    const authUser = res?.data?.user || null;
+    const authenticated = Boolean(res?.data?.authenticated && authUser);
+    if (!authenticated && isTokenAuthEnabled(cfg)) {
+      writeConfig({ ...cfg, authToken: "", authGithubLogin: "" });
+    } else if (authenticated) {
+      const nextUserId = String(authUser?.userId || cfg.userId || "").trim() || cfg.userId;
+      const nextLogin = String(authUser?.githubLogin || cfg.authGithubLogin || "").trim();
+      if (nextUserId !== cfg.userId || nextLogin !== cfg.authGithubLogin) {
+        writeConfig({ ...cfg, userId: nextUserId, authGithubLogin: nextLogin });
+      }
+    }
+
+    return localOk({
+      remoteEnabled: true,
+      authenticated,
+      authConfigured: Boolean(res?.data?.authConfigured),
+      user: authenticated
+        ? {
+            userId: String(authUser.userId || ""),
+            githubLogin: String(authUser.githubLogin || ""),
+            githubId: Number(authUser.githubId || 0)
+          }
+        : null
+    });
+  });
+
+  ipcMain.handle("auth:github-device-start", async () => {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localFail("Please configure API Endpoint first");
+    }
+
+    const res = await remoteRequest(cfg, "/auth/github/device/start", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    if (res?.ok && res?.data?.verificationUriComplete) {
+      try {
+        await shell.openExternal(String(res.data.verificationUriComplete));
+      } catch {
+        // ignore
+      }
+    } else if (res?.ok && res?.data?.verificationUri) {
+      try {
+        await shell.openExternal(String(res.data.verificationUri));
+      } catch {
+        // ignore
+      }
+    }
+    return res;
+  });
+
+  ipcMain.handle("auth:github-device-poll", async (_, deviceCode) => {
+    const cfg = readConfig();
+    if (!isRemoteEnabled(cfg)) {
+      return localFail("Please configure API Endpoint first");
+    }
+
+    const code = String(deviceCode || "").trim();
+    if (!code) {
+      return { ok: false, code: "INVALID_DEVICE_CODE", message: "deviceCode is required" };
+    }
+
+    const res = await remoteRequest(cfg, "/auth/github/device/poll", {
+      method: "POST",
+      body: JSON.stringify({ deviceCode: code })
+    });
+
+    if (
+      res?.ok &&
+      res?.data?.status === "approved" &&
+      typeof res?.data?.accessToken === "string" &&
+      res.data.accessToken.trim()
+    ) {
+      const user = res?.data?.user || {};
+      const nextCfg = writeConfig({
+        ...cfg,
+        authToken: res.data.accessToken.trim(),
+        authGithubLogin: String(user.githubLogin || "").trim(),
+        userId: String(user.userId || cfg.userId || "").trim() || cfg.userId
+      });
+      return localOk({
+        status: "approved",
+        user: {
+          userId: nextCfg.userId,
+          githubLogin: nextCfg.authGithubLogin
+        }
+      });
+    }
+
+    return res;
+  });
+
+  ipcMain.handle("auth:logout", async () => {
+    const cfg = readConfig();
+    if (isRemoteEnabled(cfg)) {
+      try {
+        await remoteRequest(cfg, "/auth/logout", {
+          method: "POST",
+          body: JSON.stringify({})
+        });
+      } catch {
+        // ignore
+      }
+    }
+    const next = writeConfig({ ...cfg, authToken: "", authGithubLogin: "" });
+    return localOk({
+      loggedOut: true,
+      userId: next.userId
+    });
   });
 
   ipcMain.handle("clips:list", async (_, query = {}) => {
@@ -1753,10 +1912,7 @@ const setupIpc = () => {
           if (isRemoteEnabled(cfg)) {
             const abs = new URL(imageUrl, cfg.apiBase.trim()).toString();
             const res = await fetch(abs, {
-              headers: {
-                "x-user-id": cfg.userId,
-                "x-device-id": cfg.deviceId
-              }
+              headers: buildRemoteHeaders(cfg)
             });
             if (res.ok) {
               const buf = Buffer.from(await res.arrayBuffer());

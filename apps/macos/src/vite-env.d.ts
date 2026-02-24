@@ -7,6 +7,7 @@ declare global {
         apiBase: string;
         userId: string;
         deviceId: string;
+        authGithubLogin: string;
         autoCapture: boolean;
         launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
@@ -16,11 +17,26 @@ declare global {
         apiBase: string;
         userId: string;
         deviceId: string;
+        authGithubLogin?: string;
         autoCapture: boolean;
         launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
         hotkey: string;
       }) => Promise<{ ok: boolean; message?: string }>;
+      getAuthStatus: () => Promise<{
+        ok: boolean;
+        data?: {
+          remoteEnabled: boolean;
+          authenticated: boolean;
+          authConfigured: boolean;
+          user: { userId: string; githubLogin: string; githubId?: number } | null;
+        };
+        code?: string;
+        message?: string;
+      }>;
+      startGithubDeviceAuth: () => Promise<any>;
+      pollGithubDeviceAuth: (deviceCode: string) => Promise<any>;
+      logoutAuth: () => Promise<any>;
       listClips: (query?: { q?: string; favorite?: boolean }) => Promise<any>;
       getClip: (id: string) => Promise<any>;
       createClip: (payload: {

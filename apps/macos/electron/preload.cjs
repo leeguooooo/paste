@@ -180,6 +180,10 @@ process.on("uncaughtException", (err) => {
 contextBridge.exposeInMainWorld("macos", {
   getConfig: () => ipcRenderer.invoke("config:get"),
   setConfig: (next) => ipcRenderer.invoke("config:set", next),
+  getAuthStatus: () => ipcRenderer.invoke("auth:status"),
+  startGithubDeviceAuth: () => ipcRenderer.invoke("auth:github-device-start"),
+  pollGithubDeviceAuth: (deviceCode) => ipcRenderer.invoke("auth:github-device-poll", deviceCode),
+  logoutAuth: () => ipcRenderer.invoke("auth:logout"),
 
   listClips: (query) => ipcRenderer.invoke("clips:list", query),
   getClip: (id) => ipcRenderer.invoke("clips:get", id),

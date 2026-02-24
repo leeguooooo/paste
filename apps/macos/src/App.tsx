@@ -24,16 +24,34 @@ type AppConfig = {
   apiBase: string;
   userId: string;
   deviceId: string;
+  authGithubLogin: string;
   autoCapture: boolean;
   launchAtLogin: boolean;
   retention: "30d" | "180d" | "365d" | "forever";
   hotkey: string;
 };
 
+type AuthStatus = {
+  remoteEnabled: boolean;
+  authenticated: boolean;
+  authConfigured: boolean;
+  user: { userId: string; githubLogin: string; githubId?: number } | null;
+};
+
+type DeviceAuthSession = {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string | null;
+  retryAfterSec: number;
+  startedAt: number;
+};
+
 const emptyConfig: AppConfig = {
   apiBase: "",
   userId: "mac_user_demo",
   deviceId: "macos_desktop",
+  authGithubLogin: "",
   autoCapture: true,
   launchAtLogin: false,
   retention: "180d",
@@ -308,6 +326,15 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>({
+    remoteEnabled: false,
+    authenticated: false,
+    authConfigured: false,
+    user: null
+  });
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [deviceAuthSession, setDeviceAuthSession] = useState<DeviceAuthSession | null>(null);
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -323,6 +350,7 @@ export default function App() {
   const selectionReasonRef = useRef<"keyboard" | "hover" | "click" | "other">("other");
   const hoverRafRef = useRef<number | null>(null);
   const hoverPendingIndexRef = useRef<number | null>(null);
+  const authPollTimerRef = useRef<number | null>(null);
 
   const previewTextById = useMemo(() => {
     const map = new Map<string, string>();
@@ -356,10 +384,156 @@ export default function App() {
     finally { setLoading(false); }
   }, [query, favoriteOnly]);
 
+  const clearAuthPollTimer = useCallback(() => {
+    if (authPollTimerRef.current) {
+      window.clearTimeout(authPollTimerRef.current);
+      authPollTimerRef.current = null;
+    }
+  }, []);
+
+  const loadAuthStatus = useCallback(async () => {
+    try {
+      const res = await window.macos.getAuthStatus();
+      if (res?.ok && res.data) {
+        setAuthStatus({
+          remoteEnabled: Boolean(res.data.remoteEnabled),
+          authenticated: Boolean(res.data.authenticated),
+          authConfigured: Boolean(res.data.authConfigured),
+          user: res.data.user
+            ? {
+                userId: String(res.data.user.userId || ""),
+                githubLogin: String(res.data.user.githubLogin || ""),
+                githubId: Number(res.data.user.githubId || 0)
+              }
+            : null
+        });
+        return;
+      }
+      setAuthStatus((prev) => ({
+        ...prev,
+        authenticated: false,
+        user: null
+      }));
+    } catch (e) {
+      console.error(e);
+      setAuthStatus((prev) => ({
+        ...prev,
+        authenticated: false,
+        user: null
+      }));
+    }
+  }, []);
+
+  const pollDeviceAuth = useCallback(async (deviceCode: string) => {
+    const code = String(deviceCode || "").trim();
+    if (!code) return;
+    try {
+      const res = await window.macos.pollGithubDeviceAuth(code);
+      if (res?.ok && res?.data?.status === "pending") {
+        const nextSec = Number(res?.data?.retryAfterSec || 5);
+        setAuthMessage("Waiting for GitHub authorization...");
+        authPollTimerRef.current = window.setTimeout(() => {
+          void pollDeviceAuth(code);
+        }, Math.max(2, nextSec) * 1000);
+        return;
+      }
+      if (res?.ok && res?.data?.status === "approved") {
+        clearAuthPollTimer();
+        setDeviceAuthSession(null);
+        setAuthMessage("Signed in with GitHub.");
+        await loadConfig();
+        await loadAuthStatus();
+        void loadClips(true);
+        return;
+      }
+      if (res?.ok && res?.data?.status === "denied") {
+        clearAuthPollTimer();
+        setDeviceAuthSession(null);
+        setAuthMessage(String(res?.data?.message || "Authorization denied."));
+        await loadAuthStatus();
+        return;
+      }
+      clearAuthPollTimer();
+      setDeviceAuthSession(null);
+      setAuthMessage(String(res?.message || "GitHub auth failed."));
+    } catch (e) {
+      clearAuthPollTimer();
+      setDeviceAuthSession(null);
+      setAuthMessage(e instanceof Error ? e.message : "GitHub auth failed.");
+    }
+  }, [clearAuthPollTimer, loadAuthStatus, loadClips]);
+
+  const startGithubAuth = useCallback(async () => {
+    setAuthLoading(true);
+    setAuthMessage("");
+    clearAuthPollTimer();
+    try {
+      const res = await window.macos.startGithubDeviceAuth();
+      if (!res?.ok) {
+        setAuthMessage(String(res?.message || "Failed to start GitHub auth."));
+        return;
+      }
+      const data = res?.data || {};
+      const deviceCode = String(data.deviceCode || "").trim();
+      const userCode = String(data.userCode || "").trim();
+      const verificationUri = String(data.verificationUri || "").trim();
+      const verificationUriComplete = data.verificationUriComplete ? String(data.verificationUriComplete) : null;
+      if (!deviceCode || !userCode || !verificationUri) {
+        setAuthMessage("GitHub auth payload is invalid.");
+        return;
+      }
+
+      const retryAfterSec = Math.max(2, Number(data.interval || 5));
+      setDeviceAuthSession({
+        deviceCode,
+        userCode,
+        verificationUri,
+        verificationUriComplete,
+        retryAfterSec,
+        startedAt: Date.now()
+      });
+      setAuthMessage(`Open GitHub and enter code: ${userCode}`);
+      authPollTimerRef.current = window.setTimeout(() => {
+        void pollDeviceAuth(deviceCode);
+      }, retryAfterSec * 1000);
+    } catch (e) {
+      setAuthMessage(e instanceof Error ? e.message : "Failed to start GitHub auth.");
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [clearAuthPollTimer, pollDeviceAuth]);
+
+  const logoutGithubAuth = useCallback(async () => {
+    setAuthLoading(true);
+    setAuthMessage("");
+    clearAuthPollTimer();
+    try {
+      const res = await window.macos.logoutAuth();
+      if (!res?.ok) {
+        setAuthMessage(String(res?.message || "Sign out failed."));
+        return;
+      }
+      setDeviceAuthSession(null);
+      setAuthMessage("Signed out.");
+      await loadConfig();
+      await loadAuthStatus();
+      void loadClips(true);
+    } catch (e) {
+      setAuthMessage(e instanceof Error ? e.message : "Sign out failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [clearAuthPollTimer, loadAuthStatus, loadClips]);
+
   useEffect(() => {
     void loadConfig();
+    void loadAuthStatus();
     void loadClips(true);
-  }, []);
+  }, [loadAuthStatus, loadClips]);
+
+  useEffect(() => () => {
+    clearAuthPollTimer();
+  }, [clearAuthPollTimer]);
 
   useEffect(() => {
     const off = window.macos.onOpenSettings?.(() => {
@@ -740,8 +914,9 @@ export default function App() {
     return <div className="preview-text">{previewTextById.get(clip.id) ?? ""}</div>;
   };
 
+  const effectiveUserId = authStatus.user?.userId || config.userId;
   const showDemo = !favoriteOnly && !loading && clips.length === 0 && query.trim() === "";
-  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(config.userId, config.deviceId) : clips;
+  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, config.deviceId) : clips;
 
   const saveConfig = async () => {
     const res = await window.macos.setConfig(config);
@@ -751,6 +926,7 @@ export default function App() {
       }
       setShowSettings(false);
       await loadConfig();
+      await loadAuthStatus();
       void loadClips();
       return;
     }
@@ -894,8 +1070,8 @@ export default function App() {
 	                <Globe size={12} /> Connection
 	              </div>
 	              <div className="settings-row">
-	                <label>API Endpoint</label>
-	                <input
+		                <label>API Endpoint</label>
+		                <input
                   type="text"
                   placeholder="https://api.example.com/v1"
                   value={config.apiBase}
@@ -903,11 +1079,47 @@ export default function App() {
                 />
               </div>
               <div className="settings-row">
+                <label>GitHub Auth</label>
+                {authStatus.authenticated && authStatus.user ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, opacity: 0.8 }}>@{authStatus.user.githubLogin}</span>
+                    <button
+                      className="btn-cancel"
+                      type="button"
+                      onClick={() => void logoutGithubAuth()}
+                      disabled={authLoading}
+                    >
+                      {authLoading ? "..." : "Sign out"}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="btn-save"
+                    type="button"
+                    onClick={() => void startGithubAuth()}
+                    disabled={authLoading || !authStatus.remoteEnabled || !authStatus.authConfigured}
+                  >
+                    {!authStatus.remoteEnabled
+                      ? "Set API first"
+                      : (!authStatus.authConfigured ? "Auth not configured" : (authLoading ? "Starting..." : "Sign in with GitHub"))}
+                  </button>
+                )}
+              </div>
+              {deviceAuthSession && (
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4, lineHeight: 1.35 }}>
+                  Open {deviceAuthSession.verificationUri} and enter code: {deviceAuthSession.userCode}
+                </div>
+              )}
+              {authMessage ? (
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{authMessage}</div>
+              ) : null}
+              <div className="settings-row">
                 <label>User ID</label>
                 <input
                   type="text"
-                  value={config.userId}
+                  value={effectiveUserId}
                   onChange={e => setConfig({ ...config, userId: e.target.value })}
+                  disabled={authStatus.authenticated}
                 />
               </div>
             </div>

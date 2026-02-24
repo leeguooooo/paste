@@ -6,6 +6,11 @@ interface Env {
   DB?: D1Database;
   CACHE?: KVNamespace;
   IMAGES?: R2Bucket;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  AUTH_SECRET?: string;
+  ALLOW_HEADER_IDENTITY?: string;
+  AUTH_GITHUB_REDIRECT_URI?: string;
 }
 
 type ClipRecord = {
@@ -76,6 +81,20 @@ type Identity = {
   deviceId: string;
 };
 
+type AuthSession = {
+  v: 1;
+  sub: string;
+  gh: string;
+  gid: number;
+  iat: number;
+  exp: number;
+};
+
+type GithubUser = {
+  id: number;
+  login: string;
+};
+
 const MAX_LIST_LIMIT = 200;
 const MAX_SYNC_LIMIT = 300;
 const DEFAULT_LIST_LIMIT = 50;
@@ -85,11 +104,16 @@ const MAX_IMAGE_DATA_URL_LENGTH_D1 = 1_500_000;
 // Upper bound for accepting image uploads when R2 is enabled. Still keep this
 // conservative to avoid oversized JSON payloads in Workers.
 const MAX_IMAGE_DATA_URL_LENGTH_UPLOAD = 12_000_000;
+const AUTH_SESSION_COOKIE = "paste_session";
+const AUTH_GITHUB_STATE_COOKIE = "paste_oauth_state";
+const AUTH_GITHUB_NEXT_COOKIE = "paste_oauth_next";
+const AUTH_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const AUTH_OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers": "content-type, x-user-id, x-device-id"
+  "access-control-allow-headers": "content-type, authorization, x-user-id, x-device-id"
 };
 
 const CLIP_TYPES = new Set<ClipType>(["text", "link", "code", "html", "image"]);
@@ -108,6 +132,173 @@ const ok = <T>(data: T, status = 200): Response => json({ ok: true, data }, stat
 const fail = (code: string, message: string, status: number): Response =>
   json({ ok: false, code, message }, status);
 
+const toBase64Url = (raw: Uint8Array): string => {
+  let s = "";
+  for (let i = 0; i < raw.length; i++) {
+    s += String.fromCharCode(raw[i]);
+  }
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+
+const fromBase64Url = (raw: string): Uint8Array => {
+  const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const decoded = atob(padded);
+  const out = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) {
+    out[i] = decoded.charCodeAt(i);
+  }
+  return out;
+};
+
+const parseCookies = (request: Request): Map<string, string> => {
+  const map = new Map<string, string>();
+  const raw = request.headers.get("cookie") ?? "";
+  const chunks = raw.split(";");
+  for (const part of chunks) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (!key) continue;
+    map.set(key, value);
+  }
+  return map;
+};
+
+const isSecureRequest = (request: Request): boolean => {
+  const proto = request.headers.get("x-forwarded-proto")?.trim().toLowerCase();
+  if (proto === "https") return true;
+  if (proto === "http") return false;
+  return new URL(request.url).protocol === "https:";
+};
+
+const serializeCookie = (
+  name: string,
+  value: string,
+  options: {
+    maxAge?: number;
+    path?: string;
+    httpOnly?: boolean;
+    secure?: boolean;
+    sameSite?: "Lax" | "Strict" | "None";
+  } = {}
+): string => {
+  const parts = [`${name}=${value}`];
+  parts.push(`Path=${options.path ?? "/"}`);
+  if (typeof options.maxAge === "number") {
+    parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAge))}`);
+  }
+  if (options.httpOnly !== false) {
+    parts.push("HttpOnly");
+  }
+  if (options.secure !== false) {
+    parts.push("Secure");
+  }
+  parts.push(`SameSite=${options.sameSite ?? "Lax"}`);
+  return parts.join("; ");
+};
+
+const redirectWithCookies = (location: string, cookies: string[] = []): Response => {
+  const headers = new Headers();
+  headers.set("location", location);
+  headers.set("cache-control", "no-store");
+  for (const cookie of cookies) {
+    headers.append("set-cookie", cookie);
+  }
+  return new Response(null, { status: 302, headers });
+};
+
+const allowHeaderIdentity = (env: Env): boolean => env.ALLOW_HEADER_IDENTITY !== "0";
+
+const hmacSign = async (secret: string, message: string): Promise<string> => {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  return toBase64Url(new Uint8Array(sig));
+};
+
+const parseSessionPayload = (token: string): AuthSession | null => {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  try {
+    const jsonRaw = new TextDecoder().decode(fromBase64Url(parts[0]));
+    const parsed = JSON.parse(jsonRaw) as Partial<AuthSession>;
+    if (!parsed || parsed.v !== 1) return null;
+    if (typeof parsed.sub !== "string" || !parsed.sub.trim()) return null;
+    if (typeof parsed.gh !== "string" || !parsed.gh.trim()) return null;
+    if (typeof parsed.gid !== "number" || !Number.isFinite(parsed.gid) || parsed.gid <= 0) return null;
+    if (typeof parsed.iat !== "number" || !Number.isFinite(parsed.iat)) return null;
+    if (typeof parsed.exp !== "number" || !Number.isFinite(parsed.exp)) return null;
+    return {
+      v: 1,
+      sub: parsed.sub.trim(),
+      gh: parsed.gh.trim(),
+      gid: parsed.gid,
+      iat: parsed.iat,
+      exp: parsed.exp
+    };
+  } catch {
+    return null;
+  }
+};
+
+const buildSessionToken = async (env: Env, user: GithubUser): Promise<string | null> => {
+  const authSecret = env.AUTH_SECRET?.trim() ?? "";
+  if (!authSecret) return null;
+  const now = Date.now();
+  const payload: AuthSession = {
+    v: 1,
+    sub: user.login.toLowerCase(),
+    gh: user.login,
+    gid: user.id,
+    iat: now,
+    exp: now + AUTH_SESSION_TTL_SECONDS * 1000
+  };
+  const payloadRaw = new TextEncoder().encode(JSON.stringify(payload));
+  const payloadB64 = toBase64Url(payloadRaw);
+  const sig = await hmacSign(authSecret, payloadB64);
+  return `${payloadB64}.${sig}`;
+};
+
+const readSession = async (request: Request, env: Env): Promise<AuthSession | null> => {
+  const authSecret = env.AUTH_SECRET?.trim() ?? "";
+  if (!authSecret) return null;
+  const token = parseCookies(request).get(AUTH_SESSION_COOKIE);
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const payload = parseSessionPayload(token);
+  if (!payload) return null;
+  if (payload.exp <= Date.now()) return null;
+  const expectedSig = await hmacSign(authSecret, parts[0]);
+  if (expectedSig !== parts[1]) return null;
+  return payload;
+};
+
+const readBearerSession = async (request: Request, env: Env): Promise<AuthSession | null> => {
+  const raw = request.headers.get("authorization")?.trim() ?? "";
+  if (!/^bearer\s+/i.test(raw)) return null;
+  const token = raw.replace(/^bearer\s+/i, "").trim();
+  if (!token) return null;
+  const authSecret = env.AUTH_SECRET?.trim() ?? "";
+  if (!authSecret) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const payload = parseSessionPayload(token);
+  if (!payload) return null;
+  if (payload.exp <= Date.now()) return null;
+  const expectedSig = await hmacSign(authSecret, parts[0]);
+  if (expectedSig !== parts[1]) return null;
+  return payload;
+};
+
 const getDbOrError = (env: Env): D1Database | Response => {
   if (!env.DB) {
     return fail(
@@ -119,18 +310,26 @@ const getDbOrError = (env: Env): D1Database | Response => {
   return env.DB;
 };
 
-const getIdentity = (request: Request): Identity | Response => {
-  const userId = request.headers.get("x-user-id")?.trim() ?? "";
-  const deviceId = request.headers.get("x-device-id")?.trim() ?? "";
+const getIdentity = async (request: Request, env: Env): Promise<Identity | Response> => {
+  const session = (await readSession(request, env)) ?? (await readBearerSession(request, env));
+  const headerDeviceId = request.headers.get("x-device-id")?.trim() ?? "";
+  if (session) {
+    return { userId: session.sub, deviceId: headerDeviceId || "web_browser" };
+  }
 
+  if (!allowHeaderIdentity(env)) {
+    return fail("AUTH_REQUIRED", "Sign in is required.", 401);
+  }
+
+  const userId = request.headers.get("x-user-id")?.trim() ?? "";
+  const deviceId = headerDeviceId;
   if (!userId || !deviceId) {
     return fail(
       "IDENTITY_REQUIRED",
-      "Headers x-user-id and x-device-id are required before auth is enabled.",
+      "Sign in with GitHub or provide headers x-user-id and x-device-id.",
       400
     );
   }
-
   return { userId, deviceId };
 };
 
@@ -1469,6 +1668,323 @@ const handleSyncPush = async (
   });
 };
 
+const getSafeNextPath = (raw: string | null | undefined): string => {
+  const s = (raw ?? "").trim();
+  if (!s || !s.startsWith("/") || s.startsWith("//")) {
+    return "/";
+  }
+  return s;
+};
+
+const getGithubRedirectUri = (request: Request, env: Env): string => {
+  const configured = env.AUTH_GITHUB_REDIRECT_URI?.trim();
+  if (configured) return configured;
+  const url = new URL(request.url);
+  return `${url.origin}/v1/auth/github/callback`;
+};
+
+const hasGithubAuthConfig = (env: Env): boolean =>
+  Boolean(env.GITHUB_CLIENT_ID?.trim() && env.GITHUB_CLIENT_SECRET?.trim() && env.AUTH_SECRET?.trim());
+
+const handleAuthGithubStart = async (request: Request, env: Env): Promise<Response> => {
+  if (!hasGithubAuthConfig(env)) {
+    return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
+  }
+
+  const url = new URL(request.url);
+  const state = crypto.randomUUID().replace(/-/g, "");
+  const nextPath = getSafeNextPath(url.searchParams.get("next"));
+  const authUrl = new URL("https://github.com/login/oauth/authorize");
+  authUrl.searchParams.set("client_id", env.GITHUB_CLIENT_ID!.trim());
+  authUrl.searchParams.set("redirect_uri", getGithubRedirectUri(request, env));
+  authUrl.searchParams.set("scope", "read:user");
+  authUrl.searchParams.set("state", state);
+
+  const secure = isSecureRequest(request);
+  const cookies = [
+    serializeCookie(AUTH_GITHUB_STATE_COOKIE, state, {
+      maxAge: AUTH_OAUTH_STATE_TTL_SECONDS,
+      secure
+    }),
+    serializeCookie(AUTH_GITHUB_NEXT_COOKIE, encodeURIComponent(nextPath), {
+      maxAge: AUTH_OAUTH_STATE_TTL_SECONDS,
+      secure
+    })
+  ];
+  return redirectWithCookies(authUrl.toString(), cookies);
+};
+
+const handleAuthGithubCallback = async (request: Request, env: Env): Promise<Response> => {
+  if (!hasGithubAuthConfig(env)) {
+    return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code")?.trim() ?? "";
+  const returnedState = url.searchParams.get("state")?.trim() ?? "";
+  if (!code || !returnedState) {
+    return fail("INVALID_AUTH_CALLBACK", "code and state are required", 400);
+  }
+
+  const cookies = parseCookies(request);
+  const storedState = cookies.get(AUTH_GITHUB_STATE_COOKIE) ?? "";
+  const nextPath = getSafeNextPath(
+    (() => {
+      try {
+        return decodeURIComponent(cookies.get(AUTH_GITHUB_NEXT_COOKIE) ?? "");
+      } catch {
+        return "/";
+      }
+    })()
+  );
+  if (!storedState || storedState !== returnedState) {
+    return fail("INVALID_AUTH_STATE", "oauth state mismatch", 400);
+  }
+
+  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "user-agent": "pastyx-auth"
+    },
+    body: JSON.stringify({
+      client_id: env.GITHUB_CLIENT_ID!.trim(),
+      client_secret: env.GITHUB_CLIENT_SECRET!.trim(),
+      code,
+      redirect_uri: getGithubRedirectUri(request, env)
+    })
+  });
+  if (!tokenRes.ok) {
+    return fail("GITHUB_TOKEN_EXCHANGE_FAILED", `github token exchange failed (${tokenRes.status})`, 502);
+  }
+
+  const tokenJson = (await tokenRes.json()) as { access_token?: string; error?: string; error_description?: string };
+  const accessToken = tokenJson.access_token?.trim() ?? "";
+  if (!accessToken) {
+    const message = tokenJson.error_description?.trim() || tokenJson.error?.trim() || "github access token missing";
+    return fail("GITHUB_TOKEN_MISSING", message, 502);
+  }
+
+  const userRes = await fetch("https://api.github.com/user", {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${accessToken}`,
+      "user-agent": "pastyx-auth"
+    }
+  });
+  if (!userRes.ok) {
+    return fail("GITHUB_USER_FETCH_FAILED", `github user fetch failed (${userRes.status})`, 502);
+  }
+  const user = (await userRes.json()) as Partial<GithubUser>;
+  const githubUser: GithubUser = {
+    id: Number(user.id),
+    login: String(user.login ?? "").trim().toLowerCase()
+  };
+  if (!githubUser.login || !Number.isFinite(githubUser.id) || githubUser.id <= 0) {
+    return fail("GITHUB_USER_INVALID", "github user payload is invalid", 502);
+  }
+
+  const sessionToken = await buildSessionToken(env, githubUser);
+  if (!sessionToken) {
+    return fail("AUTH_CONFIG_MISSING", "AUTH_SECRET is not configured.", 500);
+  }
+
+  const secure = isSecureRequest(request);
+  return redirectWithCookies(nextPath, [
+    serializeCookie(AUTH_SESSION_COOKIE, sessionToken, {
+      maxAge: AUTH_SESSION_TTL_SECONDS,
+      secure
+    }),
+    serializeCookie(AUTH_GITHUB_STATE_COOKIE, "", {
+      maxAge: 0,
+      secure
+    }),
+    serializeCookie(AUTH_GITHUB_NEXT_COOKIE, "", {
+      maxAge: 0,
+      secure
+    })
+  ]);
+};
+
+const handleAuthGithubDeviceStart = async (env: Env): Promise<Response> => {
+  if (!hasGithubAuthConfig(env)) {
+    return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
+  }
+
+  const form = new URLSearchParams();
+  form.set("client_id", env.GITHUB_CLIENT_ID!.trim());
+  form.set("scope", "read:user");
+
+  const res = await fetch("https://github.com/login/device/code", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded",
+      "user-agent": "pastyx-auth"
+    },
+    body: form.toString()
+  });
+  if (!res.ok) {
+    return fail("GITHUB_DEVICE_START_FAILED", `github device start failed (${res.status})`, 502);
+  }
+  const data = (await res.json()) as {
+    device_code?: string;
+    user_code?: string;
+    verification_uri?: string;
+    verification_uri_complete?: string;
+    expires_in?: number;
+    interval?: number;
+  };
+  const deviceCode = (data.device_code ?? "").trim();
+  const userCode = (data.user_code ?? "").trim();
+  const verificationUri = (data.verification_uri ?? "").trim();
+  if (!deviceCode || !userCode || !verificationUri) {
+    return fail("GITHUB_DEVICE_START_INVALID", "github device code response is invalid", 502);
+  }
+
+  return ok({
+    deviceCode,
+    userCode,
+    verificationUri,
+    verificationUriComplete: (data.verification_uri_complete ?? "").trim() || null,
+    expiresIn: Number.isFinite(Number(data.expires_in)) ? Number(data.expires_in) : 900,
+    interval: Number.isFinite(Number(data.interval)) ? Number(data.interval) : 5
+  });
+};
+
+const handleAuthGithubDevicePoll = async (request: Request, env: Env): Promise<Response> => {
+  if (!hasGithubAuthConfig(env)) {
+    return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
+  }
+  const parsed = await parseJson<{ deviceCode?: string }>(request);
+  if (parsed instanceof Response) {
+    return parsed;
+  }
+  const deviceCode = String(parsed.deviceCode ?? "").trim();
+  if (!deviceCode) {
+    return fail("INVALID_DEVICE_CODE", "deviceCode is required", 400);
+  }
+
+  const form = new URLSearchParams();
+  form.set("client_id", env.GITHUB_CLIENT_ID!.trim());
+  form.set("device_code", deviceCode);
+  form.set("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
+
+  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded",
+      "user-agent": "pastyx-auth"
+    },
+    body: form.toString()
+  });
+  if (!tokenRes.ok) {
+    return fail("GITHUB_TOKEN_EXCHANGE_FAILED", `github token exchange failed (${tokenRes.status})`, 502);
+  }
+
+  const tokenJson = (await tokenRes.json()) as {
+    access_token?: string;
+    error?: string;
+    error_description?: string;
+    interval?: number;
+  };
+
+  const pendingCode = (tokenJson.error ?? "").trim();
+  if (pendingCode === "authorization_pending" || pendingCode === "slow_down") {
+    return ok({
+      status: "pending",
+      retryAfterSec: pendingCode === "slow_down" ? 10 : Number(tokenJson.interval ?? 5)
+    });
+  }
+  if (pendingCode === "expired_token" || pendingCode === "access_denied" || pendingCode === "incorrect_device_code") {
+    return ok({
+      status: "denied",
+      code: pendingCode,
+      message: tokenJson.error_description || pendingCode
+    });
+  }
+
+  const accessToken = (tokenJson.access_token ?? "").trim();
+  if (!accessToken) {
+    return fail(
+      "GITHUB_TOKEN_MISSING",
+      tokenJson.error_description?.trim() || tokenJson.error?.trim() || "github access token missing",
+      502
+    );
+  }
+
+  const userRes = await fetch("https://api.github.com/user", {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${accessToken}`,
+      "user-agent": "pastyx-auth"
+    }
+  });
+  if (!userRes.ok) {
+    return fail("GITHUB_USER_FETCH_FAILED", `github user fetch failed (${userRes.status})`, 502);
+  }
+  const user = (await userRes.json()) as Partial<GithubUser>;
+  const githubUser: GithubUser = {
+    id: Number(user.id),
+    login: String(user.login ?? "").trim().toLowerCase()
+  };
+  if (!githubUser.login || !Number.isFinite(githubUser.id) || githubUser.id <= 0) {
+    return fail("GITHUB_USER_INVALID", "github user payload is invalid", 502);
+  }
+
+  const sessionToken = await buildSessionToken(env, githubUser);
+  if (!sessionToken) {
+    return fail("AUTH_CONFIG_MISSING", "AUTH_SECRET is not configured.", 500);
+  }
+
+  return ok({
+    status: "approved",
+    accessToken: sessionToken,
+    user: {
+      userId: githubUser.login,
+      githubLogin: githubUser.login,
+      githubId: githubUser.id
+    }
+  });
+};
+
+const handleAuthMe = async (request: Request, env: Env): Promise<Response> => {
+  const session = (await readSession(request, env)) ?? (await readBearerSession(request, env));
+  return ok({
+    authenticated: Boolean(session),
+    user: session
+      ? {
+          userId: session.sub,
+          githubLogin: session.gh,
+          githubId: session.gid
+        }
+      : null,
+    headerIdentityEnabled: allowHeaderIdentity(env),
+    authConfigured: hasGithubAuthConfig(env)
+  });
+};
+
+const handleAuthLogout = async (request: Request): Promise<Response> => {
+  const secure = isSecureRequest(request);
+  const headers = new Headers({
+    "content-type": "application/json; charset=utf-8",
+    ...CORS_HEADERS
+  });
+  headers.append(
+    "set-cookie",
+    serializeCookie(AUTH_SESSION_COOKIE, "", {
+      maxAge: 0,
+      secure
+    })
+  );
+  return new Response(JSON.stringify({ ok: true, data: { loggedOut: true } }), {
+    status: 200,
+    headers
+  });
+};
+
 const getClipIdFromPath = (path: string): string | null => {
   const match = path.match(/^\/v1\/clips\/([^/]+)$/);
   return match ? decodeURIComponent(match[1]) : null;
@@ -1510,6 +2026,30 @@ export default {
         });
       }
 
+      if (request.method === "GET" && path === "/v1/auth/github/start") {
+        return handleAuthGithubStart(request, env);
+      }
+
+      if (request.method === "GET" && path === "/v1/auth/github/callback") {
+        return handleAuthGithubCallback(request, env);
+      }
+
+      if (request.method === "GET" && path === "/v1/auth/me") {
+        return handleAuthMe(request, env);
+      }
+
+      if (request.method === "POST" && path === "/v1/auth/github/device/start") {
+        return handleAuthGithubDeviceStart(env);
+      }
+
+      if (request.method === "POST" && path === "/v1/auth/github/device/poll") {
+        return handleAuthGithubDevicePoll(request, env);
+      }
+
+      if (request.method === "POST" && path === "/v1/auth/logout") {
+        return handleAuthLogout(request);
+      }
+
       // Public image streaming endpoint (no-auth phase).
       // Needs to be accessible via <img src="..."> so it cannot rely on custom headers.
       if (request.method === "GET") {
@@ -1519,7 +2059,7 @@ export default {
         }
       }
 
-      const identityOrError = getIdentity(request);
+      const identityOrError = await getIdentity(request, env);
       if (identityOrError instanceof Response) {
         return identityOrError;
       }

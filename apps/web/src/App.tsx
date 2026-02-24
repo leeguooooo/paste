@@ -19,6 +19,17 @@ import {
 const API_BASE = "/v1";
 
 type ClipCardItem = ClipItem & { __demo?: boolean };
+type AuthUser = {
+  userId: string;
+  githubLogin: string;
+  githubId: number;
+};
+type AuthMeData = {
+  authenticated: boolean;
+  user: AuthUser | null;
+  headerIdentityEnabled: boolean;
+  authConfigured: boolean;
+};
 
 // Default identity from localStorage for cross-device sync
 const DEFAULT_USER_ID = localStorage.getItem("paste_user_id") || "user_demo";
@@ -271,6 +282,10 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
 export default function App() {
   const [userId, setUserId] = useState(DEFAULT_USER_ID);
   const [deviceId, setDeviceId] = useState(DEFAULT_DEVICE_ID);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authConfigured, setAuthConfigured] = useState(false);
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -281,12 +296,42 @@ export default function App() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const inflightImagePrefetchRef = useRef(new Set<string>());
+  const effectiveUserId = authUser?.userId || userId;
+  const effectiveDeviceId = deviceId.trim() || "web_browser";
 
   const fetchHeaders = {
-    "x-user-id": userId,
-    "x-device-id": deviceId,
+    "x-user-id": effectiveUserId,
+    "x-device-id": effectiveDeviceId,
     "content-type": "application/json"
   };
+
+  const loadAuth = useCallback(async () => {
+    setAuthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        headers: {
+          "x-device-id": effectiveDeviceId
+        }
+      });
+      const data: ApiResponse<AuthMeData> = await res.json();
+      if (data.ok) {
+        setAuthConfigured(Boolean(data.data.authConfigured));
+      }
+      if (data.ok && data.data.authenticated && data.data.user) {
+        setAuthUser(data.data.user);
+        setUserId(data.data.user.userId);
+      } else {
+        setAuthUser(null);
+      }
+    } catch (e) {
+      console.error(e);
+      setAuthUser(null);
+      setAuthConfigured(false);
+    } finally {
+      setAuthLoading(false);
+      setAuthReady(true);
+    }
+  }, [effectiveDeviceId]);
 
   const loadClips = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
@@ -310,7 +355,7 @@ export default function App() {
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [query, userId, deviceId]);
+  }, [query, effectiveUserId, effectiveDeviceId]);
 
   const fetchClipById = useCallback(async (id: string): Promise<ClipItem | null> => {
     try {
@@ -323,7 +368,7 @@ export default function App() {
       console.error(e);
       return null;
     }
-  }, [userId, deviceId]);
+  }, [effectiveUserId, effectiveDeviceId]);
 
   // Best-effort: if list results are "lite" (no imageDataUrl), gradually hydrate
   // image clips so previews can render without requiring a copy action.
@@ -363,13 +408,19 @@ export default function App() {
   }, [clips, fetchClipById]);
 
   useEffect(() => {
-    void loadClips(true);
-  }, [userId, deviceId]); 
+    void loadAuth();
+  }, [loadAuth]);
 
   useEffect(() => {
+    if (!authReady) return;
+    void loadClips(true);
+  }, [effectiveUserId, effectiveDeviceId, authReady, loadClips]); 
+
+  useEffect(() => {
+    if (!authReady) return;
     const timer = setTimeout(() => void loadClips(), 150);
     return () => clearTimeout(timer);
-  }, [query, loadClips]);
+  }, [query, loadClips, authReady]);
 
   // Keyboard Navigation (mirrors macOS App)
   useEffect(() => {
@@ -475,10 +526,31 @@ export default function App() {
   };
 
   const saveSettings = () => {
-    localStorage.setItem("paste_user_id", userId);
-    localStorage.setItem("paste_device_id", deviceId);
+    if (!authUser) {
+      localStorage.setItem("paste_user_id", userId.trim() || "user_demo");
+    }
+    localStorage.setItem("paste_device_id", effectiveDeviceId);
     setShowSettings(false);
-    window.location.reload();
+    void loadAuth();
+  };
+
+  const signInWithGithub = () => {
+    const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
+    window.location.href = `${API_BASE}/auth/github/start?next=${next}`;
+  };
+
+  const logoutGithub = async () => {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: "POST",
+        headers: { "content-type": "application/json" }
+      });
+      setAuthUser(null);
+      void loadAuth();
+      void loadClips(true);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const getIcon = (type: string) => {
@@ -515,7 +587,7 @@ export default function App() {
   };
 
   const showDemo = !loading && clips.length === 0 && query.trim() === "";
-  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(userId, deviceId) : clips;
+  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, effectiveDeviceId) : clips;
 
   return (
     <main className="app-shell">
@@ -525,6 +597,9 @@ export default function App() {
           <span className="brand-name">Pastyx</span>
         </a>
         <nav className="marketing-links" aria-label="Primary">
+          {authUser ? (
+            <span style={{ fontSize: 12, opacity: 0.75 }}>@{authUser.githubLogin}</span>
+          ) : null}
           <a href="https://github.com/leeguooooo/paste" target="_blank" rel="noopener noreferrer">Source Code</a>
           <a className="nav-cta" href="https://github.com/leeguooooo/paste/releases/latest" target="_blank" rel="noopener noreferrer">
             Download for macOS
@@ -682,8 +757,39 @@ export default function App() {
             </div>
             <div className="settings-section">
               <div className="settings-row">
-                <label>User ID (Match with macOS App to sync)</label>
-                <input type="text" value={userId} onChange={e => setUserId(e.target.value)} />
+                <label>GitHub Account</label>
+                {authUser ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 13, opacity: 0.8 }}>Signed in as @{authUser.githubLogin}</span>
+                    <button
+                      className="btn-save"
+                      type="button"
+                      style={{ width: "auto", background: "#2f3542", border: "none", padding: "8px 12px", borderRadius: 8, color: "white", fontWeight: 600 }}
+                      onClick={() => void logoutGithub()}
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="btn-save"
+                    type="button"
+                    style={{ width: "auto", background: "#111827", border: "1px solid rgba(255,255,255,0.2)", padding: "8px 12px", borderRadius: 8, color: "white", fontWeight: 600 }}
+                    onClick={signInWithGithub}
+                    disabled={authLoading || !authConfigured}
+                  >
+                    {!authConfigured ? "GitHub auth not configured" : (authLoading ? "Checking..." : "Sign in with GitHub")}
+                  </button>
+                )}
+              </div>
+              <div className="settings-row">
+                <label>{authUser ? "User ID (from GitHub)" : "User ID (legacy mode)"}</label>
+                <input
+                  type="text"
+                  value={authUser ? effectiveUserId : userId}
+                  onChange={e => setUserId(e.target.value)}
+                  disabled={Boolean(authUser)}
+                />
               </div>
               <div className="settings-row">
                 <label>Device ID</label>

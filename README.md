@@ -150,6 +150,30 @@ binding = "CACHE"
 id = "<your-kv-namespace-id>"
 ```
 
+Optional GitHub auth (recommended for Web):
+
+```bash
+# set in apps/api (Cloudflare Worker)
+wrangler secret put GITHUB_CLIENT_ID
+wrangler secret put GITHUB_CLIENT_SECRET
+wrangler secret put AUTH_SECRET
+```
+
+In GitHub OAuth App settings:
+
+- Enable regular OAuth callback for Web: `/v1/auth/github/callback`
+- Enable Device Flow for macOS app sign-in
+
+Optional auth-related vars (`apps/api/wrangler.toml`):
+
+```toml
+[vars]
+# Keep legacy header mode on/off (default on). Set "0" after all clients migrate to auth.
+ALLOW_HEADER_IDENTITY = "1"
+# Optional explicit callback URL if needed by your OAuth app settings.
+# AUTH_GITHUB_REDIRECT_URI = "https://paste-web.example.com/v1/auth/github/callback"
+```
+
 Run dev:
 
 ```bash
@@ -176,12 +200,21 @@ To enable sync, set `API Base` to one of:
 
 Then keep `User ID` consistent across devices.
 
-## API (No Auth Phase)
+## API
 
-Identity via headers (until auth is added):
+Web auth endpoints:
 
-- `x-user-id: your-user-id`
-- `x-device-id: your-device-id`
+- `GET /v1/auth/github/start` (redirect to GitHub OAuth)
+- `GET /v1/auth/github/callback` (OAuth callback)
+- `POST /v1/auth/github/device/start` (start Device Flow for desktop app)
+- `POST /v1/auth/github/device/poll` (poll Device Flow status)
+- `GET /v1/auth/me` (current session)
+- `POST /v1/auth/logout` (clear session cookie)
+
+Identity for business APIs:
+
+- Web (signed-in): session cookie from GitHub login
+- Legacy/desktop mode: `x-user-id` + `x-device-id` headers
 
 Endpoints:
 
