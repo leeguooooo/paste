@@ -422,6 +422,81 @@ body {
   box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.22);
 }
 
+.inline-field-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-field-actions input[type="text"] {
+  flex: 1;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  border-radius: 999px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--card-fg);
+  background: rgba(0, 0, 0, 0.07);
+  border: 0.5px solid var(--border-color);
+}
+
+.auth-device-box {
+  margin-top: 8px;
+  border-radius: 12px;
+  border: 0.5px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.03);
+  padding: 10px;
+}
+
+.auth-device-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--card-muted);
+}
+
+.auth-device-code {
+  margin-top: 6px;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  color: var(--card-fg);
+  background: rgba(0, 0, 0, 0.06);
+  user-select: text;
+}
+
+.auth-device-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.auth-device-actions .btn-save,
+.auth-device-actions .btn-cancel {
+  flex: 1;
+}
+
+.auth-device-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--card-muted);
+}
+
+.auth-message {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--card-muted);
+}
+
 .checkbox-row {
   display: flex;
   align-items: center;
@@ -466,6 +541,14 @@ body {
   color: white;
 }
 
+.btn-cancel,
+.btn-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .btn-cancel:hover { background: rgba(0, 0, 0, 0.12); }
 .btn-save:hover { filter: brightness(1.05); }
 
@@ -492,6 +575,9 @@ body {
 @media (prefers-color-scheme: dark) {
   .settings-section { background: rgba(255, 255, 255, 0.03); }
   .settings-row input[type="text"] { background: rgba(255, 255, 255, 0.06); }
+  .status-badge { background: rgba(255, 255, 255, 0.08); }
+  .auth-device-box { background: rgba(255, 255, 255, 0.04); }
+  .auth-device-code { background: rgba(255, 255, 255, 0.08); }
   .btn-cancel { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.9); }
   .btn-cancel:hover { background: rgba(255, 255, 255, 0.12); }
   .icon-btn:hover { background: rgba(255, 255, 255, 0.14); }

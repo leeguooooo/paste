@@ -2041,6 +2041,19 @@ const setupIpc = () => {
 
   ipcMain.handle("window:toggle", async () => toggleMainWindow());
 
+  ipcMain.handle("system:open-external", async (_, rawUrl) => {
+    const url = String(rawUrl || "").trim();
+    if (!url) {
+      return localFail("url is required");
+    }
+    try {
+      await shell.openExternal(url);
+      return localOk({ ok: true });
+    } catch (error) {
+      return localFail(error instanceof Error ? error.message : "failed to open url");
+    }
+  });
+
   ipcMain.handle("window:capture", async () => {
     try {
       if (!mainWindow) {

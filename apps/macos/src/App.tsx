@@ -11,7 +11,8 @@ import {
   FileText,
   Code,
   ArrowRight,
-  Check,
+  Copy,
+  ExternalLink,
   Globe,
   Cpu,
   Monitor,
@@ -511,7 +512,7 @@ export default function App() {
         retryAfterSec,
         startedAt: Date.now()
       });
-      setAuthMessage(`Open GitHub and enter code: ${userCode}`);
+      setAuthMessage("Browser opened. If not, click Open GitHub below.");
       authPollTimerRef.current = window.setTimeout(() => {
         void pollDeviceAuth(deviceCode);
       }, retryAfterSec * 1000);
@@ -543,6 +544,42 @@ export default function App() {
       setAuthLoading(false);
     }
   }, [clearAuthPollTimer, loadAuthStatus, loadClips]);
+
+  const copyText = useCallback(async (raw: string, label: string) => {
+    const text = String(raw || "").trim();
+    if (!text) return;
+    try {
+      const res = await window.macos.writeClipboard(text);
+      if (res?.ok) {
+        setAuthMessage(`${label} copied.`);
+        return;
+      }
+    } catch {
+      // ignore and fallback
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setAuthMessage(`${label} copied.`);
+    } catch (e) {
+      setAuthMessage(e instanceof Error ? e.message : `Failed to copy ${label.toLowerCase()}.`);
+    }
+  }, []);
+
+  const openGithubVerificationPage = useCallback(async () => {
+    const url = String(
+      deviceAuthSession?.verificationUriComplete || deviceAuthSession?.verificationUri || ""
+    ).trim();
+    if (!url) return;
+    try {
+      const res = await window.macos.openExternal(url);
+      if (!res?.ok) {
+        setAuthMessage(String(res?.message || "Failed to open GitHub page."));
+      }
+    } catch (e) {
+      setAuthMessage(e instanceof Error ? e.message : "Failed to open GitHub page.");
+    }
+  }, [deviceAuthSession]);
 
   useEffect(() => {
     void loadConfig();
@@ -1111,8 +1148,8 @@ export default function App() {
               <div className="settings-row">
                 <label>GitHub Auth</label>
                 {authStatus.authenticated && authStatus.user ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>@{authStatus.user.githubLogin}</span>
+                  <div className="inline-field-actions">
+                    <span className="status-badge">@{authStatus.user.githubLogin}</span>
                     <button
                       className="btn-cancel"
                       type="button"
@@ -1136,29 +1173,49 @@ export default function App() {
                 )}
               </div>
               {deviceAuthSession && (
-                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4, lineHeight: 1.35 }}>
-                  Open {deviceAuthSession.verificationUri} and enter code: {deviceAuthSession.userCode}
+                <div className="auth-device-box">
+                  <div className="auth-device-title">Authorize this device</div>
+                  <div className="auth-device-code" title={deviceAuthSession.userCode}>
+                    {deviceAuthSession.userCode}
+                  </div>
+                  <div className="auth-device-actions">
+                    <button className="btn-save" type="button" onClick={() => void openGithubVerificationPage()}>
+                      <ExternalLink size={14} />
+                      Open GitHub
+                    </button>
+                    <button
+                      className="btn-cancel"
+                      type="button"
+                      onClick={() => void copyText(deviceAuthSession.userCode, "Code")}
+                    >
+                      <Copy size={14} />
+                      Copy code
+                    </button>
+                  </div>
+                  <div className="auth-device-hint">
+                    If GitHub page does not auto-open, use Open GitHub above.
+                  </div>
                 </div>
               )}
               {authMessage ? (
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{authMessage}</div>
+                <div className="auth-message">{authMessage}</div>
               ) : null}
-              <div className="settings-row">
-                <label>Account User ID</label>
-                <input
-                  type="text"
-                  value={authStatus.authenticated ? effectiveUserId : config.userId}
-                  disabled
-                />
-              </div>
-              <div className="settings-row">
-                <label>Device ID</label>
-                <input
-                  type="text"
-                  value={config.deviceId}
-                  disabled
-                />
-              </div>
+              {authStatus.authenticated && (
+                <div className="settings-row">
+                  <label>Account User ID</label>
+                  <div className="inline-field-actions">
+                    <input type="text" value={effectiveUserId} readOnly />
+                    <button
+                      className="btn-cancel"
+                      type="button"
+                      onClick={() => void copyText(effectiveUserId, "User ID")}
+                    >
+                      <Copy size={14} />
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="settings-row">
                 <label>Regenerate Device</label>
                 <button className="btn-cancel" type="button" onClick={resetDeviceId}>
@@ -1171,13 +1228,27 @@ export default function App() {
 	              <div className="settings-section-title">
 	                <Cpu size={12} /> System
 	              </div>
-	              <div className="settings-row">
-	                <label>Global Hotkey</label>
-	                <input
+              <div className="settings-row">
+                <label>Global Hotkey</label>
+                <input
                   type="text"
                   value={config.hotkey}
                   onChange={e => setConfig({ ...config, hotkey: e.target.value })}
                 />
+              </div>
+              <div className="settings-row">
+                <label>Device ID</label>
+                <div className="inline-field-actions">
+                  <input type="text" value={config.deviceId} readOnly />
+                  <button
+                    className="btn-cancel"
+                    type="button"
+                    onClick={() => void copyText(config.deviceId, "Device ID")}
+                  >
+                    <Copy size={14} />
+                    Copy
+                  </button>
+                </div>
               </div>
               <div className="checkbox-row">
                 <input
