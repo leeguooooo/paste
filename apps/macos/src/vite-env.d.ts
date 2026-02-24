@@ -8,6 +8,8 @@ declare global {
         userId: string;
         deviceId: string;
         authGithubLogin: string;
+        icloudSync: boolean;
+        icloudAvailable: boolean;
         autoCapture: boolean;
         launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";
@@ -18,6 +20,7 @@ declare global {
         userId: string;
         deviceId: string;
         authGithubLogin?: string;
+        icloudSync: boolean;
         autoCapture: boolean;
         launchAtLogin: boolean;
         retention: "30d" | "180d" | "365d" | "forever";

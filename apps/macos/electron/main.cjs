@@ -215,6 +215,9 @@ const trayDebug = process.env.PASTE_TRAY_DEBUG === "1";
 
 const configFile = path.join(app.getPath("userData"), "pastyx-macos-config.json");
 const localClipsFile = path.join(app.getPath("userData"), "pastyx-local-clips.json");
+const iCloudDocumentsRoot = path.join(app.getPath("home"), "Library", "Mobile Documents", "com~apple~CloudDocs");
+const iCloudAppDir = path.join(iCloudDocumentsRoot, "Pastyx");
+const iCloudClipsFile = path.join(iCloudAppDir, "pastyx-local-clips.json");
 
 // Keep a conservative limit even in local mode to avoid huge on-disk JSON.
 const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
@@ -224,6 +227,7 @@ const MAX_IMAGE_PREVIEW_DATA_URL_LENGTH = 250_000;
 let mainWindow = null;
 let tray = null;
 let clipboardTimer = null;
+let iCloudSyncTimer = null;
 let lastClipboardFingerprint = "";
 let lastClipboardProbeFingerprint = "";
 let lastClipboardFailure = { fingerprint: "", at: 0 };
@@ -234,6 +238,13 @@ let registeredHotkey = null;
 let hotkeyStatus = { ok: true, hotkey: null, corrected: false, message: null };
 let lastTargetApp = { name: "", bundleId: "", at: 0 };
 let suppressBlurHideUntil = 0;
+
+const markAppQuiting = () => {
+  // Keep historical property name for compatibility with existing checks.
+  app.isQuiting = true;
+};
+
+const isAppQuiting = () => Boolean(app.isQuiting);
 
 const RELEASES_LATEST_URL = "https://github.com/leeguooooo/paste/releases/latest";
 
@@ -380,6 +391,7 @@ const defaultConfig = {
   deviceId: "macos_desktop",
   authToken: "",
   authGithubLogin: "",
+  icloudSync: false,
   // Tracks per-user choice after login when local history exists:
   // imported | skipped
   localSyncDecisionByUser: {},
@@ -404,6 +416,7 @@ const normalizeConfig = (input) => {
   merged.userId = String(merged.userId || defaultConfig.userId).trim() || defaultConfig.userId;
   merged.authGithubLogin = String(merged.authGithubLogin || "").trim();
   merged.authToken = String(merged.authToken || "").trim();
+  merged.icloudSync = Boolean(merged.icloudSync);
   const decisions = merged.localSyncDecisionByUser;
   const normalizedDecisions = {};
   if (decisions && typeof decisions === "object") {
@@ -451,6 +464,8 @@ const getConfigForRenderer = () => {
     userId: cfg.userId,
     deviceId: cfg.deviceId,
     authGithubLogin: cfg.authGithubLogin || "",
+    icloudSync: Boolean(cfg.icloudSync),
+    icloudAvailable: fs.existsSync(iCloudDocumentsRoot),
     autoCapture: Boolean(cfg.autoCapture),
     launchAtLogin: Boolean(cfg.launchAtLogin),
     retention: cfg.retention,
@@ -461,14 +476,39 @@ const getConfigForRenderer = () => {
 const localOk = (data) => ({ ok: true, data });
 const localFail = (message) => ({ ok: false, code: "LOCAL_ERROR", message });
 
-const readLocalDb = () => {
+const isICloudSyncEnabled = (cfg) => Boolean(cfg?.icloudSync);
+
+const isICloudDriveAvailable = () => {
   try {
-    if (!fs.existsSync(localClipsFile)) {
-      const initial = { clips: [] };
-      fs.writeFileSync(localClipsFile, JSON.stringify(initial, null, 2));
-      return initial;
+    return fs.existsSync(iCloudDocumentsRoot);
+  } catch {
+    return false;
+  }
+};
+
+const ensureICloudAppDir = () => {
+  try {
+    if (!isICloudDriveAvailable()) return false;
+    if (!fs.existsSync(iCloudAppDir)) {
+      fs.mkdirSync(iCloudAppDir, { recursive: true });
     }
-    const parsed = JSON.parse(fs.readFileSync(localClipsFile, "utf-8"));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const readDbFile = (file, createIfMissing = false) => {
+  try {
+    if (!fs.existsSync(file)) {
+      if (createIfMissing) {
+        const initial = { clips: [] };
+        fs.writeFileSync(file, JSON.stringify(initial, null, 2));
+        return initial;
+      }
+      return { clips: [] };
+    }
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
     if (!parsed || !Array.isArray(parsed.clips)) return { clips: [] };
     return parsed;
   } catch {
@@ -476,8 +516,99 @@ const readLocalDb = () => {
   }
 };
 
+const writeDbFile = (file, db) => {
+  const normalized = { clips: Array.isArray(db?.clips) ? db.clips : [] };
+  fs.writeFileSync(file, JSON.stringify(normalized, null, 2));
+};
+
+const clipSyncTs = (clip) =>
+  Math.max(
+    Number(clip?.serverUpdatedAt || 0),
+    Number(clip?.clientUpdatedAt || 0),
+    Number(clip?.createdAt || 0)
+  );
+
+const mergeClipsForLocalSync = (localClips, cloudClips) => {
+  const out = new Map();
+  const ingest = (clip) => {
+    if (!clip || typeof clip !== "object") return;
+    const id = String(clip.id || "").trim();
+    if (!id) return;
+    const existing = out.get(id);
+    if (!existing) {
+      out.set(id, clip);
+      return;
+    }
+    const aTs = clipSyncTs(existing);
+    const bTs = clipSyncTs(clip);
+    const newer = bTs >= aTs ? clip : existing;
+    const older = bTs >= aTs ? existing : clip;
+    out.set(id, {
+      ...newer,
+      isFavorite: Boolean(newer?.isFavorite || older?.isFavorite),
+      tags: Array.from(
+        new Set(
+          (Array.isArray(newer?.tags) ? newer.tags : []).concat(Array.isArray(older?.tags) ? older.tags : [])
+        )
+      )
+    });
+  };
+  for (const c of Array.isArray(localClips) ? localClips : []) ingest(c);
+  for (const c of Array.isArray(cloudClips) ? cloudClips : []) ingest(c);
+  return Array.from(out.values());
+};
+
+const readLocalDb = () => readDbFile(localClipsFile, true);
+
 const writeLocalDb = (db) => {
-  fs.writeFileSync(localClipsFile, JSON.stringify(db, null, 2));
+  writeDbFile(localClipsFile, db);
+};
+
+const syncLocalDbWithICloud = (cfg) => {
+  if (isRemoteEnabled(cfg)) {
+    return { ok: true, changed: false, reason: "remote-mode" };
+  }
+  if (!isICloudSyncEnabled(cfg)) {
+    return { ok: true, changed: false, reason: "disabled" };
+  }
+  if (!ensureICloudAppDir()) {
+    return { ok: false, changed: false, reason: "icloud-unavailable" };
+  }
+
+  const localDb = readDbFile(localClipsFile, true);
+  const cloudDb = readDbFile(iCloudClipsFile, false);
+  const merged = cleanupLocalDb(cfg, {
+    clips: mergeClipsForLocalSync(localDb.clips, cloudDb.clips)
+  });
+
+  const localBefore = JSON.stringify(localDb);
+  const cloudBefore = JSON.stringify(cloudDb);
+  const mergedRaw = JSON.stringify(merged);
+
+  const localChanged = localBefore !== mergedRaw;
+  const cloudChanged = cloudBefore !== mergedRaw;
+
+  if (localChanged) {
+    writeDbFile(localClipsFile, merged);
+  }
+  if (cloudChanged) {
+    writeDbFile(iCloudClipsFile, merged);
+  }
+
+  return {
+    ok: true,
+    changed: localChanged || cloudChanged,
+    localChanged,
+    cloudChanged
+  };
+};
+
+const runICloudSyncIfNeeded = (cfg, { notify = false } = {}) => {
+  const res = syncLocalDbWithICloud(cfg);
+  if (notify && res?.ok && res?.localChanged) {
+    broadcastToWindows("clips:changed", { source: "icloud", at: Date.now() });
+  }
+  return res;
 };
 
 const retentionMsFromConfig = (cfg) => {
@@ -560,6 +691,9 @@ const cleanupLocalDb = (cfg, db) => {
 };
 
 const localListClips = (cfg, query = {}) => {
+  if (isICloudSyncEnabled(cfg)) {
+    runICloudSyncIfNeeded(cfg);
+  }
   const q = (query.q || "").toString().trim().toLowerCase();
   const favoriteOnly = Boolean(query.favorite);
 
@@ -612,6 +746,9 @@ const localCreateClip = (cfg, payload) => {
 
   const cleaned = cleanupLocalDb(cfg, { clips: [clip, ...clips] });
   writeLocalDb(cleaned);
+  if (isICloudSyncEnabled(cfg)) {
+    runICloudSyncIfNeeded(cfg);
+  }
   return localOk(clip);
 };
 
@@ -625,6 +762,9 @@ const localToggleFavorite = (cfg, id, isFavorite) => {
   );
   const cleaned = cleanupLocalDb(cfg, { clips: next });
   writeLocalDb(cleaned);
+  if (isICloudSyncEnabled(cfg)) {
+    runICloudSyncIfNeeded(cfg);
+  }
   return localOk({ ok: true });
 };
 
@@ -634,6 +774,9 @@ const localDeleteClip = (cfg, id) => {
   const next = clips.filter((c) => c?.id !== id);
   const cleaned = cleanupLocalDb(cfg, { clips: next });
   writeLocalDb(cleaned);
+  if (isICloudSyncEnabled(cfg)) {
+    runICloudSyncIfNeeded(cfg);
+  }
   return localOk({ ok: true });
 };
 
@@ -1262,6 +1405,7 @@ const buildTrayTemplate = () => {
     }
     if (updateState.downloaded) {
       try {
+        markAppQuiting();
         autoUpdater.quitAndInstall();
       } catch {
         // ignore
@@ -1351,7 +1495,7 @@ const buildTrayTemplate = () => {
     {
       label: "Quit",
       click: () => {
-        app.isQuiting = true;
+        markAppQuiting();
         app.quit();
       }
     }
@@ -1420,7 +1564,7 @@ const createMainWindow = async () => {
   });
 
   mainWindow.on("close", (event) => {
-    if (!app.isQuiting) {
+    if (!isAppQuiting()) {
       event.preventDefault();
       mainWindow.hide();
     }
@@ -1589,6 +1733,7 @@ const setupAutoUpdate = () => {
           cancelId: 0
         });
         if (res.response === 1) {
+          markAppQuiting();
           autoUpdater.quitAndInstall();
         }
       } catch {
@@ -1692,14 +1837,35 @@ const startClipboardWatcher = () => {
   }, 1200);
 };
 
+const startICloudSyncWatcher = () => {
+  if (iCloudSyncTimer) {
+    clearInterval(iCloudSyncTimer);
+    iCloudSyncTimer = null;
+  }
+  iCloudSyncTimer = setInterval(() => {
+    const cfg = readConfig();
+    if (!isICloudSyncEnabled(cfg) || isRemoteEnabled(cfg)) {
+      return;
+    }
+    runICloudSyncIfNeeded(cfg, { notify: true });
+  }, 5000);
+};
+
 const setupIpc = () => {
   ipcMain.handle("config:get", async () => getConfigForRenderer());
 
   ipcMain.handle("config:set", async (_, next) => {
     const merged = writeConfig({ ...readConfig(), ...(next || {}) });
+    let settingsMessage = "";
     // Apply retention cleanup in local mode.
     if (!isRemoteEnabled(merged)) {
       writeLocalDb(cleanupLocalDb(merged, readLocalDb()));
+      if (isICloudSyncEnabled(merged)) {
+        const syncRes = runICloudSyncIfNeeded(merged, { notify: true });
+        if (!syncRes?.ok && syncRes?.reason === "icloud-unavailable") {
+          settingsMessage = "iCloud Drive unavailable. Please enable iCloud Drive in macOS Settings.";
+        }
+      }
     }
     try {
       app.setLoginItemSettings({ openAtLogin: Boolean(merged.launchAtLogin) });
@@ -1712,7 +1878,8 @@ const setupIpc = () => {
     if (hk.ok && hk.hotkey && hk.corrected && hk.hotkey !== merged.hotkey) {
       writeConfig({ ...merged, hotkey: hk.hotkey });
     }
-    return { ok: hk.ok, message: hk.message };
+    const message = [hk.message, settingsMessage].filter(Boolean).join("\n");
+    return { ok: hk.ok, message: message || undefined };
   });
 
   ipcMain.handle("auth:status", async () => {
@@ -2238,6 +2405,9 @@ app.on("ready", async () => {
   const cfg = readConfig();
   if (!isRemoteEnabled(cfg)) {
     writeLocalDb(cleanupLocalDb(cfg, readLocalDb()));
+    if (isICloudSyncEnabled(cfg)) {
+      runICloudSyncIfNeeded(cfg);
+    }
   }
 
   await ensureMainWindow();
@@ -2290,6 +2460,7 @@ app.on("ready", async () => {
     }
   }
   startClipboardWatcher();
+  startICloudSyncWatcher();
 });
 
 app.on("activate", () => {
@@ -2302,9 +2473,16 @@ app.on("activate", () => {
   }
 });
 
+app.on("before-quit", () => {
+  markAppQuiting();
+});
+
 app.on("will-quit", () => {
   if (clipboardTimer) {
     clearInterval(clipboardTimer);
+  }
+  if (iCloudSyncTimer) {
+    clearInterval(iCloudSyncTimer);
   }
   globalShortcut.unregisterAll();
 });

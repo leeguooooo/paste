@@ -26,6 +26,8 @@ type AppConfig = {
   userId: string;
   deviceId: string;
   authGithubLogin: string;
+  icloudSync: boolean;
+  icloudAvailable: boolean;
   autoCapture: boolean;
   launchAtLogin: boolean;
   retention: "30d" | "180d" | "365d" | "forever";
@@ -53,6 +55,8 @@ const emptyConfig: AppConfig = {
   userId: "mac_user_demo",
   deviceId: "macos_desktop",
   authGithubLogin: "",
+  icloudSync: false,
+  icloudAvailable: false,
   autoCapture: true,
   launchAtLogin: false,
   retention: "180d",
@@ -368,9 +372,26 @@ export default function App() {
   const loadConfig = async () => {
     try {
       const next = await window.macos.getConfig();
-      setConfig(next);
+      setConfig({
+        ...emptyConfig,
+        ...next,
+        icloudSync: Boolean(next?.icloudSync),
+        icloudAvailable: Boolean(next?.icloudAvailable)
+      });
     } catch (e) { console.error(e); }
   };
+
+  const toConfigPayload = useCallback((cfg: AppConfig) => ({
+    apiBase: cfg.apiBase,
+    userId: cfg.userId,
+    deviceId: cfg.deviceId,
+    authGithubLogin: cfg.authGithubLogin,
+    icloudSync: cfg.icloudSync,
+    autoCapture: cfg.autoCapture,
+    launchAtLogin: cfg.launchAtLogin,
+    retention: cfg.retention,
+    hotkey: cfg.hotkey
+  }), []);
 
   const loadClips = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
@@ -493,8 +514,12 @@ export default function App() {
 
       const effectiveUserIdForSave = authStatus.user?.userId || config.userId;
       const persistPayload = authStatus.authenticated
-        ? { ...config, userId: effectiveUserIdForSave, authGithubLogin: authStatus.user?.githubLogin || config.authGithubLogin }
-        : config;
+        ? {
+            ...toConfigPayload(config),
+            userId: effectiveUserIdForSave,
+            authGithubLogin: authStatus.user?.githubLogin || config.authGithubLogin
+          }
+        : toConfigPayload(config);
       const saveRes = await window.macos.setConfig(persistPayload);
       if (!saveRes?.ok) {
         setAuthMessage(String(saveRes?.message || "Failed to save API settings."));
@@ -537,7 +562,7 @@ export default function App() {
     } finally {
       setAuthLoading(false);
     }
-  }, [authStatus.authenticated, authStatus.user, clearAuthPollTimer, config, loadAuthStatus, pollDeviceAuth]);
+  }, [authStatus.authenticated, authStatus.user, clearAuthPollTimer, config, loadAuthStatus, pollDeviceAuth, toConfigPayload]);
 
   const logoutGithubAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -1041,8 +1066,12 @@ export default function App() {
 
   const saveConfig = async () => {
     const payload = authStatus.authenticated
-      ? { ...config, userId: effectiveUserId, authGithubLogin: authStatus.user?.githubLogin || config.authGithubLogin }
-      : config;
+      ? {
+          ...toConfigPayload(config),
+          userId: effectiveUserId,
+          authGithubLogin: authStatus.user?.githubLogin || config.authGithubLogin
+        }
+      : toConfigPayload(config);
     const res = await window.macos.setConfig(payload);
     if (res.ok) {
       if (res.message) {
@@ -1201,14 +1230,36 @@ export default function App() {
 	              <div className="settings-section-title">
 	                <Globe size={12} /> Connection
 	              </div>
-	              <div className="settings-row">
-		                <label>API Endpoint</label>
-		                <input
+		              <div className="settings-row">
+			                <label>API Endpoint</label>
+			                <input
                   type="text"
                   placeholder="https://api.example.com/v1"
                   value={config.apiBase}
                   onChange={e => setConfig({ ...config, apiBase: e.target.value })}
                 />
+              </div>
+              <div className="settings-row">
+                <label>iCloud Drive Sync (No API)</label>
+                <div className="checkbox-row" style={{ marginTop: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={config.icloudSync}
+                    disabled={!config.icloudAvailable}
+                    onChange={e => setConfig({ ...config, icloudSync: e.target.checked })}
+                  />
+                  Enable iCloud sync in local mode
+                </div>
+                {!config.icloudAvailable ? (
+                  <div className="auth-message">
+                    iCloud Drive is unavailable. Turn on iCloud Drive in macOS Settings first.
+                  </div>
+                ) : null}
+                {config.icloudSync ? (
+                  <div className="auth-device-hint">
+                    Keep API Endpoint empty to use local + iCloud Drive sync only.
+                  </div>
+                ) : null}
               </div>
               <div className="settings-row">
                 <label>GitHub Auth</label>
