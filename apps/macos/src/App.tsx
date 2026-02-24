@@ -468,6 +468,25 @@ export default function App() {
     setAuthMessage("");
     clearAuthPollTimer();
     try {
+      const draftApiBase = String(config.apiBase || "").trim();
+      if (!/^https?:\/\//i.test(draftApiBase)) {
+        setAuthMessage("Please set a valid API Endpoint first.");
+        return;
+      }
+
+      const effectiveUserIdForSave = authStatus.user?.userId || config.userId;
+      const persistPayload = authStatus.authenticated
+        ? { ...config, userId: effectiveUserIdForSave, authGithubLogin: authStatus.user?.githubLogin || config.authGithubLogin }
+        : config;
+      const saveRes = await window.macos.setConfig(persistPayload);
+      if (!saveRes?.ok) {
+        setAuthMessage(String(saveRes?.message || "Failed to save API settings."));
+        return;
+      }
+
+      await loadConfig();
+      await loadAuthStatus();
+
       const res = await window.macos.startGithubDeviceAuth();
       if (!res?.ok) {
         setAuthMessage(String(res?.message || "Failed to start GitHub auth."));
@@ -501,7 +520,7 @@ export default function App() {
     } finally {
       setAuthLoading(false);
     }
-  }, [clearAuthPollTimer, pollDeviceAuth]);
+  }, [authStatus.authenticated, authStatus.user, clearAuthPollTimer, config, loadAuthStatus, pollDeviceAuth]);
 
   const logoutGithubAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -1108,11 +1127,11 @@ export default function App() {
                     className="btn-save"
                     type="button"
                     onClick={() => void startGithubAuth()}
-                    disabled={authLoading || !authStatus.remoteEnabled || !authStatus.authConfigured}
+                    disabled={authLoading || !/^https?:\/\//i.test(String(config.apiBase || "").trim())}
                   >
-                    {!authStatus.remoteEnabled
+                    {!/^https?:\/\//i.test(String(config.apiBase || "").trim())
                       ? "Set API first"
-                      : (!authStatus.authConfigured ? "Auth not configured" : (authLoading ? "Starting..." : "Sign in with GitHub"))}
+                      : (authLoading ? "Starting..." : "Sign in with GitHub")}
                   </button>
                 )}
               </div>

@@ -233,6 +233,7 @@ let recentClipboardFingerprints = new Map(); // fingerprint -> lastSeenAt (ms)
 let registeredHotkey = null;
 let hotkeyStatus = { ok: true, hotkey: null, corrected: false, message: null };
 let lastTargetApp = { name: "", bundleId: "", at: 0 };
+let suppressBlurHideUntil = 0;
 
 const RELEASES_LATEST_URL = "https://github.com/leeguooooo/paste/releases/latest";
 
@@ -1163,8 +1164,19 @@ const toggleMainWindow = async () => {
   }
 
   fitMainWindowToDisplay();
+  suppressBlurHideUntil = Date.now() + 900;
+  try {
+    app.focus({ steal: true });
+  } catch {
+    // ignore
+  }
   win.show();
   win.focus();
+  try {
+    win.moveTop();
+  } catch {
+    // ignore
+  }
   return { visible: true };
 };
 
@@ -1338,6 +1350,9 @@ const createMainWindow = async () => {
   }
 
   mainWindow.on("blur", () => {
+    if (Date.now() < suppressBlurHideUntil) {
+      return;
+    }
     if (mainWindow && mainWindow.isVisible()) {
       mainWindow.hide();
     }
