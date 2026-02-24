@@ -33,7 +33,17 @@ type AuthMeData = {
 
 // Default identity from localStorage for cross-device sync
 const DEFAULT_USER_ID = localStorage.getItem("paste_user_id") || "user_demo";
-const DEFAULT_DEVICE_ID = localStorage.getItem("paste_device_id") || "web_browser";
+const getOrCreateDeviceId = (): string => {
+  const existing = localStorage.getItem("paste_device_id");
+  if (existing && existing.trim()) return existing.trim();
+  const next =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? `web_${crypto.randomUUID().slice(0, 8)}`
+      : `web_${Math.random().toString(36).slice(2, 10)}`;
+  localStorage.setItem("paste_device_id", next);
+  return next;
+};
+const DEFAULT_DEVICE_ID = getOrCreateDeviceId();
 
 const isValidImageDataUrl = (value: unknown): value is string => {
   if (typeof value !== "string") return false;
@@ -526,12 +536,17 @@ export default function App() {
   };
 
   const saveSettings = () => {
-    if (!authUser) {
-      localStorage.setItem("paste_user_id", userId.trim() || "user_demo");
-    }
     localStorage.setItem("paste_device_id", effectiveDeviceId);
     setShowSettings(false);
     void loadAuth();
+  };
+
+  const resetDeviceId = () => {
+    const next =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? `web_${crypto.randomUUID().slice(0, 8)}`
+        : `web_${Math.random().toString(36).slice(2, 10)}`;
+    setDeviceId(next);
   };
 
   const signInWithGithub = () => {
@@ -783,17 +798,27 @@ export default function App() {
                 )}
               </div>
               <div className="settings-row">
-                <label>{authUser ? "User ID (from GitHub)" : "User ID (legacy mode)"}</label>
+                <label>Account User ID</label>
                 <input
                   type="text"
-                  value={authUser ? effectiveUserId : userId}
-                  onChange={e => setUserId(e.target.value)}
-                  disabled={Boolean(authUser)}
+                  value={authUser ? effectiveUserId : "Sign in required"}
+                  disabled
                 />
               </div>
               <div className="settings-row">
                 <label>Device ID</label>
                 <input type="text" value={deviceId} onChange={e => setDeviceId(e.target.value)} />
+              </div>
+              <div className="settings-row">
+                <label>Regenerate Device</label>
+                <button
+                  className="btn-save"
+                  type="button"
+                  style={{ width: "auto", background: "#2f3542", border: "none", padding: "8px 12px", borderRadius: 8, color: "white", fontWeight: 600 }}
+                  onClick={resetDeviceId}
+                >
+                  New Device ID
+                </button>
               </div>
             </div>
             <button className="btn-save" style={{width:'100%', background:'#007aff', border:'none', padding:12, borderRadius:8, color:'white', fontWeight:600}} onClick={saveSettings}>

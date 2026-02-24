@@ -387,21 +387,40 @@ const defaultConfig = {
   hotkey: "CommandOrControl+Shift+V"
 };
 
+const buildDefaultDeviceId = () => `mac_${randomUUID().slice(0, 8)}`;
+
+const normalizeConfig = (input) => {
+  const merged = { ...defaultConfig, ...(input || {}) };
+  const deviceId = String(merged.deviceId || "").trim();
+  if (!deviceId || deviceId === "macos_desktop") {
+    merged.deviceId = buildDefaultDeviceId();
+  } else {
+    merged.deviceId = deviceId;
+  }
+  merged.userId = String(merged.userId || defaultConfig.userId).trim() || defaultConfig.userId;
+  merged.authGithubLogin = String(merged.authGithubLogin || "").trim();
+  merged.authToken = String(merged.authToken || "").trim();
+  return merged;
+};
+
 const readConfig = () => {
   try {
     if (!fs.existsSync(configFile)) {
-      fs.writeFileSync(configFile, JSON.stringify(defaultConfig, null, 2));
-      return { ...defaultConfig };
+      const normalized = normalizeConfig(defaultConfig);
+      fs.writeFileSync(configFile, JSON.stringify(normalized, null, 2));
+      return normalized;
     }
     const parsed = JSON.parse(fs.readFileSync(configFile, "utf-8"));
-    return { ...defaultConfig, ...(parsed || {}) };
+    const normalized = normalizeConfig(parsed);
+    fs.writeFileSync(configFile, JSON.stringify(normalized, null, 2));
+    return normalized;
   } catch {
-    return { ...defaultConfig };
+    return normalizeConfig(defaultConfig);
   }
 };
 
 const writeConfig = (next) => {
-  const merged = { ...defaultConfig, ...(next || {}) };
+  const merged = normalizeConfig(next);
   fs.writeFileSync(configFile, JSON.stringify(merged, null, 2));
   return merged;
 };

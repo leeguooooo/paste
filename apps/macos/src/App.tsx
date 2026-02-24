@@ -919,7 +919,10 @@ export default function App() {
   const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, config.deviceId) : clips;
 
   const saveConfig = async () => {
-    const res = await window.macos.setConfig(config);
+    const payload = authStatus.authenticated
+      ? { ...config, userId: effectiveUserId, authGithubLogin: authStatus.user?.githubLogin || config.authGithubLogin }
+      : config;
+    const res = await window.macos.setConfig(payload);
     if (res.ok) {
       if (res.message) {
         alert(res.message);
@@ -931,6 +934,14 @@ export default function App() {
       return;
     }
     alert(res?.message || "Failed to save settings");
+  };
+
+  const resetDeviceId = () => {
+    const next =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? `mac_${crypto.randomUUID().slice(0, 8)}`
+        : `mac_${Math.random().toString(36).slice(2, 10)}`;
+    setConfig((prev) => ({ ...prev, deviceId: next }));
   };
 
   return (
@@ -1114,13 +1125,26 @@ export default function App() {
                 <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{authMessage}</div>
               ) : null}
               <div className="settings-row">
-                <label>User ID</label>
+                <label>Account User ID</label>
                 <input
                   type="text"
-                  value={effectiveUserId}
-                  onChange={e => setConfig({ ...config, userId: e.target.value })}
-                  disabled={authStatus.authenticated}
+                  value={authStatus.authenticated ? effectiveUserId : config.userId}
+                  disabled
                 />
+              </div>
+              <div className="settings-row">
+                <label>Device ID</label>
+                <input
+                  type="text"
+                  value={config.deviceId}
+                  disabled
+                />
+              </div>
+              <div className="settings-row">
+                <label>Regenerate Device</label>
+                <button className="btn-cancel" type="button" onClick={resetDeviceId}>
+                  New Device ID
+                </button>
               </div>
             </div>
 

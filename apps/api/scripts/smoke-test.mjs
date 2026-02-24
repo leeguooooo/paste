@@ -36,7 +36,7 @@ const runMigrations = () => {
 };
 
 const startDevServer = () => {
-  const child = spawn("npx", ["wrangler", "dev", "--port", String(port), "--local"], {
+  const child = spawn("npx", ["wrangler", "dev", "--port", String(port), "--local", "--var", "ALLOW_HEADER_IDENTITY:1"], {
     cwd: apiDir,
     env: {
       ...process.env,

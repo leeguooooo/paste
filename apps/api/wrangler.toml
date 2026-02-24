@@ -12,6 +12,7 @@ routes = [
 [vars]
 APP_NAME = "paste"
 API_VERSION = "v1"
+ALLOW_HEADER_IDENTITY = "0"
 
 [[d1_databases]]
 binding = "DB"

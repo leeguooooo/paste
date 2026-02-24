@@ -168,8 +168,8 @@ Optional auth-related vars (`apps/api/wrangler.toml`):
 
 ```toml
 [vars]
-# Keep legacy header mode on/off (default on). Set "0" after all clients migrate to auth.
-ALLOW_HEADER_IDENTITY = "1"
+# Legacy header mode on/off. Recommended production value: "0".
+ALLOW_HEADER_IDENTITY = "0"
 # Optional explicit callback URL if needed by your OAuth app settings.
 # AUTH_GITHUB_REDIRECT_URI = "https://paste-web.example.com/v1/auth/github/callback"
 ```
