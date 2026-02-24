@@ -180,6 +180,8 @@ process.on("uncaughtException", (err) => {
 contextBridge.exposeInMainWorld("macos", {
   getConfig: () => ipcRenderer.invoke("config:get"),
   setConfig: (next) => ipcRenderer.invoke("config:set", next),
+  getICloudSyncStatus: () => ipcRenderer.invoke("icloud:status"),
+  runICloudSync: () => ipcRenderer.invoke("icloud:sync-now"),
   getAuthStatus: () => ipcRenderer.invoke("auth:status"),
   startGithubDeviceAuth: () => ipcRenderer.invoke("auth:github-device-start"),
   pollGithubDeviceAuth: (deviceCode) => ipcRenderer.invoke("auth:github-device-poll", deviceCode),

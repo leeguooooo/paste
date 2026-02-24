@@ -50,6 +50,15 @@ type DeviceAuthSession = {
   startedAt: number;
 };
 
+type ICloudSyncStatus = {
+  enabled: boolean;
+  available: boolean;
+  remoteMode: boolean;
+  lastSyncAt: number;
+  lastResult: "idle" | "ok" | "error" | "skipped";
+  lastMessage: string;
+};
+
 const emptyConfig: AppConfig = {
   apiBase: "",
   userId: "mac_user_demo",
@@ -339,6 +348,16 @@ export default function App() {
   });
   const [authLoading, setAuthLoading] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [icloudSyncStatus, setIcloudSyncStatus] = useState<ICloudSyncStatus>({
+    enabled: false,
+    available: false,
+    remoteMode: false,
+    lastSyncAt: 0,
+    lastResult: "idle",
+    lastMessage: ""
+  });
+  const [icloudSyncLoading, setIcloudSyncLoading] = useState(false);
+  const [icloudSyncMessage, setIcloudSyncMessage] = useState("");
   const [localSyncPendingCount, setLocalSyncPendingCount] = useState(0);
   const [localSyncLoading, setLocalSyncLoading] = useState(false);
   const [deviceAuthSession, setDeviceAuthSession] = useState<DeviceAuthSession | null>(null);
@@ -392,6 +411,33 @@ export default function App() {
     retention: cfg.retention,
     hotkey: cfg.hotkey
   }), []);
+
+  const loadICloudSyncStatus = useCallback(async () => {
+    try {
+      const res = await window.macos.getICloudSyncStatus();
+      if (res?.ok && res.data) {
+        setIcloudSyncStatus({
+          enabled: Boolean(res.data.enabled),
+          available: Boolean(res.data.available),
+          remoteMode: Boolean(res.data.remoteMode),
+          lastSyncAt: Number(res.data.lastSyncAt || 0),
+          lastResult: (res.data.lastResult || "idle") as ICloudSyncStatus["lastResult"],
+          lastMessage: String(res.data.lastMessage || "")
+        });
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    setIcloudSyncStatus({
+      enabled: Boolean(config.icloudSync),
+      available: Boolean(config.icloudAvailable),
+      remoteMode: /^https?:\/\//i.test(String(config.apiBase || "").trim()),
+      lastSyncAt: 0,
+      lastResult: "idle",
+      lastMessage: ""
+    });
+  }, [config.apiBase, config.icloudAvailable, config.icloudSync]);
 
   const loadClips = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
@@ -528,6 +574,7 @@ export default function App() {
 
       await loadConfig();
       await loadAuthStatus();
+      await loadICloudSyncStatus();
 
       const res = await window.macos.startGithubDeviceAuth();
       if (!res?.ok) {
@@ -562,7 +609,16 @@ export default function App() {
     } finally {
       setAuthLoading(false);
     }
-  }, [authStatus.authenticated, authStatus.user, clearAuthPollTimer, config, loadAuthStatus, pollDeviceAuth, toConfigPayload]);
+  }, [
+    authStatus.authenticated,
+    authStatus.user,
+    clearAuthPollTimer,
+    config,
+    loadAuthStatus,
+    loadICloudSyncStatus,
+    pollDeviceAuth,
+    toConfigPayload
+  ]);
 
   const logoutGithubAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -579,13 +635,14 @@ export default function App() {
       setLocalSyncPendingCount(0);
       await loadConfig();
       await loadAuthStatus();
+      await loadICloudSyncStatus();
       void loadClips(true);
     } catch (e) {
       setAuthMessage(e instanceof Error ? e.message : "Sign out failed.");
     } finally {
       setAuthLoading(false);
     }
-  }, [clearAuthPollTimer, loadAuthStatus, loadClips]);
+  }, [clearAuthPollTimer, loadAuthStatus, loadClips, loadICloudSyncStatus]);
 
   const syncLocalHistoryNow = useCallback(async () => {
     setLocalSyncLoading(true);
@@ -626,6 +683,28 @@ export default function App() {
       setLocalSyncLoading(false);
     }
   }, []);
+
+  const runICloudSyncNow = useCallback(async () => {
+    setIcloudSyncLoading(true);
+    setIcloudSyncMessage("");
+    try {
+      const res = await window.macos.runICloudSync();
+      if (!res?.ok || !res.data) {
+        setIcloudSyncMessage(String(res?.message || "iCloud sync failed."));
+        await loadICloudSyncStatus();
+        return;
+      }
+      setIcloudSyncMessage(
+        res.data.changed ? "iCloud sync completed and merged new changes." : "iCloud sync completed. No new changes."
+      );
+      await loadICloudSyncStatus();
+      void loadClips(true);
+    } catch (e) {
+      setIcloudSyncMessage(e instanceof Error ? e.message : "iCloud sync failed.");
+    } finally {
+      setIcloudSyncLoading(false);
+    }
+  }, [loadClips, loadICloudSyncStatus]);
 
   const copyText = useCallback(async (raw: string, label: string) => {
     const text = String(raw || "").trim();
@@ -668,6 +747,10 @@ export default function App() {
     void loadAuthStatus();
     void loadClips(true);
   }, [loadAuthStatus, loadClips]);
+
+  useEffect(() => {
+    void loadICloudSyncStatus();
+  }, [loadICloudSyncStatus]);
 
   useEffect(() => {
     if (!authStatus.authenticated) {
@@ -778,6 +861,16 @@ export default function App() {
       return new Date(n).toLocaleString();
     } catch {
       return "";
+    }
+  };
+
+  const formatSyncTime = (ts: number): string => {
+    const n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return "Never";
+    try {
+      return new Date(n).toLocaleString();
+    } catch {
+      return "Unknown";
     }
   };
 
@@ -1061,6 +1154,8 @@ export default function App() {
   };
 
   const effectiveUserId = authStatus.user?.userId || config.userId;
+  const remoteModeEnabled = /^https?:\/\//i.test(String(config.apiBase || "").trim());
+  const canRunICloudSyncNow = config.icloudAvailable && config.icloudSync && !remoteModeEnabled;
   const showDemo = !favoriteOnly && !loading && clips.length === 0 && query.trim() === "";
   const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, config.deviceId) : clips;
 
@@ -1080,6 +1175,7 @@ export default function App() {
       setShowSettings(false);
       await loadConfig();
       await loadAuthStatus();
+      await loadICloudSyncStatus();
       void loadClips();
       return;
     }
@@ -1259,6 +1355,28 @@ export default function App() {
                   <div className="auth-device-hint">
                     Keep API Endpoint empty to use local + iCloud Drive sync only.
                   </div>
+                ) : null}
+                <div className="auth-device-hint">
+                  Last sync: {formatSyncTime(icloudSyncStatus.lastSyncAt)}
+                  {icloudSyncStatus.lastResult === "error" ? " (error)" : ""}
+                </div>
+                <div className="inline-field-actions" style={{ marginTop: 8 }}>
+                  <button
+                    className="btn-cancel"
+                    type="button"
+                    onClick={() => void runICloudSyncNow()}
+                    disabled={icloudSyncLoading || !canRunICloudSyncNow}
+                  >
+                    {icloudSyncLoading ? "Syncing..." : "Sync iCloud now"}
+                  </button>
+                </div>
+                {!canRunICloudSyncNow && config.icloudSync && remoteModeEnabled ? (
+                  <div className="auth-message">
+                    iCloud local sync is disabled while API Endpoint is set.
+                  </div>
+                ) : null}
+                {icloudSyncMessage ? (
+                  <div className="auth-message">{icloudSyncMessage}</div>
                 ) : null}
               </div>
               <div className="settings-row">

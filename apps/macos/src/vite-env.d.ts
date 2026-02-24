@@ -26,6 +26,28 @@ declare global {
         retention: "30d" | "180d" | "365d" | "forever";
         hotkey: string;
       }) => Promise<{ ok: boolean; message?: string }>;
+      getICloudSyncStatus: () => Promise<{
+        ok: boolean;
+        data?: {
+          enabled: boolean;
+          available: boolean;
+          remoteMode: boolean;
+          lastSyncAt: number;
+          lastResult: "idle" | "ok" | "error" | "skipped";
+          lastMessage: string;
+        };
+        message?: string;
+      }>;
+      runICloudSync: () => Promise<{
+        ok: boolean;
+        data?: {
+          changed: boolean;
+          localChanged: boolean;
+          cloudChanged: boolean;
+          at: number;
+        };
+        message?: string;
+      }>;
       getAuthStatus: () => Promise<{
         ok: boolean;
         data?: {

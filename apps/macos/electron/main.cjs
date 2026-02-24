@@ -228,6 +228,11 @@ let mainWindow = null;
 let tray = null;
 let clipboardTimer = null;
 let iCloudSyncTimer = null;
+let iCloudSyncState = {
+  lastSyncAt: 0,
+  lastResult: "idle", // idle | ok | error | skipped
+  lastMessage: ""
+};
 let lastClipboardFingerprint = "";
 let lastClipboardProbeFingerprint = "";
 let lastClipboardFailure = { fingerprint: "", at: 0 };
@@ -605,6 +610,11 @@ const syncLocalDbWithICloud = (cfg) => {
 
 const runICloudSyncIfNeeded = (cfg, { notify = false } = {}) => {
   const res = syncLocalDbWithICloud(cfg);
+  iCloudSyncState = {
+    lastSyncAt: Date.now(),
+    lastResult: res?.ok ? "ok" : (res?.reason === "disabled" || res?.reason === "remote-mode" ? "skipped" : "error"),
+    lastMessage: String(res?.reason || "")
+  };
   if (notify && res?.ok && res?.localChanged) {
     broadcastToWindows("clips:changed", { source: "icloud", at: Date.now() });
   }
@@ -1880,6 +1890,41 @@ const setupIpc = () => {
     }
     const message = [hk.message, settingsMessage].filter(Boolean).join("\n");
     return { ok: hk.ok, message: message || undefined };
+  });
+
+  ipcMain.handle("icloud:status", async () => {
+    const cfg = readConfig();
+    return localOk({
+      enabled: Boolean(cfg.icloudSync),
+      available: isICloudDriveAvailable(),
+      remoteMode: isRemoteEnabled(cfg),
+      lastSyncAt: Number(iCloudSyncState.lastSyncAt || 0),
+      lastResult: iCloudSyncState.lastResult || "idle",
+      lastMessage: iCloudSyncState.lastMessage || ""
+    });
+  });
+
+  ipcMain.handle("icloud:sync-now", async () => {
+    const cfg = readConfig();
+    if (!isICloudSyncEnabled(cfg)) {
+      return localFail("Please enable iCloud Drive Sync first");
+    }
+    if (isRemoteEnabled(cfg)) {
+      return localFail("iCloud local sync is available only when API Endpoint is empty");
+    }
+    const res = runICloudSyncIfNeeded(cfg, { notify: true });
+    if (!res?.ok) {
+      if (res?.reason === "icloud-unavailable") {
+        return localFail("iCloud Drive unavailable. Please enable iCloud Drive in macOS Settings.");
+      }
+      return localFail("iCloud sync failed");
+    }
+    return localOk({
+      changed: Boolean(res.changed),
+      localChanged: Boolean(res.localChanged),
+      cloudChanged: Boolean(res.cloudChanged),
+      at: Number(iCloudSyncState.lastSyncAt || Date.now())
+    });
   });
 
   ipcMain.handle("auth:status", async () => {
