@@ -95,6 +95,23 @@ const htmlToText = (html?: string | null): string =>
 const isValidImageDataUrl = (value: unknown): value is string =>
   typeof value === "string" && value.startsWith("data:image/");
 
+const isProbablyHttpUrl = (value: string): boolean =>
+  /^https?:\/\/\S+$/i.test(String(value || "").trim());
+
+const getPlainTextForPaste = (clip: ClipItem): string => {
+  const contentRaw = typeof clip.content === "string" ? clip.content : "";
+  const contentTrimmed = contentRaw.trim();
+  const sourceUrl = typeof clip.sourceUrl === "string" ? clip.sourceUrl.trim() : "";
+
+  if (clip.type === "link") {
+    // Prefer the visible text users copied (e.g. long Q&A) over URL fallback.
+    if (contentTrimmed && !isProbablyHttpUrl(contentTrimmed)) return contentRaw;
+    return sourceUrl || contentRaw;
+  }
+
+  return contentRaw || sourceUrl;
+};
+
 const getPreviewDataUrl = (clip: ClipItem): string | null => {
   if (isValidImageDataUrl(clip.imagePreviewDataUrl)) return clip.imagePreviewDataUrl;
   if (isValidImageDataUrl(clip.imageDataUrl)) return clip.imageDataUrl;
@@ -391,6 +408,11 @@ export default function App() {
   const hoverRafRef = useRef<number | null>(null);
   const hoverPendingIndexRef = useRef<number | null>(null);
   const authPollTimerRef = useRef<number | null>(null);
+  // Keep hotkey handlers in sync with latest state and avoid stale closure races.
+  const selectedIndexRef = useRef(selectedIndex);
+  selectedIndexRef.current = selectedIndex;
+  const clipsRef = useRef<ClipItem[]>(clips);
+  clipsRef.current = clips;
 
   const previewTextById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1058,17 +1080,12 @@ export default function App() {
       }
     }
 
-	    // For link clips, use the URL as the plain-text fallback so pasting into
-	    // non-rich-text fields still produces a usable link.
-	    const text =
-	      effective.type === "link" && typeof effective.sourceUrl === "string" && effective.sourceUrl.trim()
-	        ? effective.sourceUrl.trim()
-	        : (effective.content || effective.sourceUrl || "");
-	    const res = await window.macos.pasteAndHide({
-	      text,
-	      html: effective.contentHtml ?? null,
-	      imageDataUrl: effective.imageDataUrl ?? null,
-	      imageUrl: effective.imageUrl ?? null
+    const text = getPlainTextForPaste(effective);
+    const res = await window.macos.pasteAndHide({
+      text,
+      html: effective.contentHtml ?? null,
+      imageDataUrl: effective.imageDataUrl ?? null,
+      imageUrl: effective.imageUrl ?? null
     });
 	    if (!res?.ok) {
 	      // Surface the root error (most commonly missing Accessibility permission).
@@ -1077,10 +1094,7 @@ export default function App() {
 	  };
 
     const handleCopyPlainText = async (clip: ClipItem) => {
-      const text =
-        clip.type === "link" && typeof clip.sourceUrl === "string" && clip.sourceUrl.trim()
-          ? clip.sourceUrl.trim()
-          : (clip.content || clip.sourceUrl || "");
+      const text = getPlainTextForPaste(clip);
 
       const res = await window.macos.pasteAndHide({
         text,
@@ -1124,44 +1138,54 @@ export default function App() {
     }
   };
 
-			  useEffect(() => {
-			    const handleKeyDown = (e: KeyboardEvent) => {
-			      if (showSettings) return;
-            // In-window quick paste: Cmd+1~Cmd+9
-            if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
-              const idx = Number(e.key) - 1;
-              const target = clips[idx] as ClipCardItem | undefined;
-              if (target) {
-                e.preventDefault();
-                if ((target as any).__demo) {
-                  void handleCopyDemo(target as any);
-                } else {
-                  void handleCopy(target);
-                }
-              }
-              return;
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (showSettings) return;
+      const currentClips = clipsRef.current;
+      const currentVisibleClips = visibleClipsRef.current;
+      const currentSelectedIndex = selectedIndexRef.current;
+
+      // In-window quick paste: Cmd+1~Cmd+9
+      if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        const idx = Number(e.key) - 1;
+        const target = currentVisibleClips[idx];
+        if (target) {
+          e.preventDefault();
+          if ((target as any).__demo) {
+            void handleCopyDemo(target as any);
+          } else {
+            void handleCopy(target as ClipItem);
+          }
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case "ArrowRight":
+          e.preventDefault();
+          selectionReasonRef.current = "keyboard";
+          setSelectedIndex((prev) => Math.min(prev + 1, currentVisibleClips.length - 1));
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          selectionReasonRef.current = "keyboard";
+          setSelectedIndex((prev) => Math.max(prev - 1, 0));
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (currentVisibleClips[currentSelectedIndex]) {
+            const target = currentVisibleClips[currentSelectedIndex];
+            if ((target as any).__demo) {
+              void handleCopyDemo(target as any);
+              break;
             }
-			      switch (e.key) {
-			        case "ArrowRight":
-			          e.preventDefault();
-			          selectionReasonRef.current = "keyboard";
-			          setSelectedIndex(prev => Math.min(prev + 1, clips.length - 1));
-			          break;
-			        case "ArrowLeft":
-			          e.preventDefault();
-			          selectionReasonRef.current = "keyboard";
-			          setSelectedIndex(prev => Math.max(prev - 1, 0));
-			          break;
-			        case "Enter":
-			          e.preventDefault();
-			          if (clips[selectedIndex]) {
-                  if (e.shiftKey) {
-                    void handleCopyPlainText(clips[selectedIndex]);
-                  } else {
-                    void handleCopy(clips[selectedIndex]);
-                  }
-			          }
-			          break;
+            if (e.shiftKey) {
+              void handleCopyPlainText(target as ClipItem);
+            } else {
+              void handleCopy(target as ClipItem);
+            }
+          }
+          break;
         case "Escape":
           e.preventDefault();
           if (query) {
@@ -1172,9 +1196,11 @@ export default function App() {
           break;
         case "Backspace":
         case "Delete":
-          if (document.activeElement !== searchInputRef.current && clips[selectedIndex]) {
+          if (document.activeElement !== searchInputRef.current && currentClips[currentSelectedIndex]) {
+            const target = currentClips[currentSelectedIndex];
+            if ((target as any).__demo) break;
             e.preventDefault();
-            void handleDelete(clips[selectedIndex].id);
+            void handleDelete(target.id);
           }
           break;
         case ",":
@@ -1185,10 +1211,10 @@ export default function App() {
           break;
         default:
           if (
-            e.key.length === 1 && 
-            !e.metaKey && 
-            !e.ctrlKey && 
-            !e.altKey && 
+            e.key.length === 1 &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            !e.altKey &&
             document.activeElement !== searchInputRef.current
           ) {
             searchInputRef.current?.focus();
@@ -1198,7 +1224,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clips, selectedIndex, showSettings, query, openSettings]);
+  }, [showSettings, query, openSettings]);
 
   const setSelectedIndexFromHover = useCallback((index: number) => {
     selectionReasonRef.current = "hover";
@@ -1261,6 +1287,8 @@ export default function App() {
   const effectiveUserId = authStatus.user?.userId || config.userId;
   const showDemo = !favoriteOnly && !loading && clips.length === 0 && query.trim() === "";
   const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, config.deviceId) : clips;
+  const visibleClipsRef = useRef<ClipCardItem[]>(visibleClips);
+  visibleClipsRef.current = visibleClips;
 
   const saveConfig = async () => {
     const payload = authStatus.authenticated
