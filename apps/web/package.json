@@ -13,6 +13,8 @@
     "deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web --branch main --commit-dirty=true --commit-message \"deploy web\""
   },
   "dependencies": {
+    "@leeguoo/design-tokens": "~0.2.0",
+    "@leeguoo/theme-bootstrap": "~0.2.0",
     "@paste/shared": "0.1.0",
     "bootstrap": "^5.3.3",
     "lucide-react": "^0.475.0",
