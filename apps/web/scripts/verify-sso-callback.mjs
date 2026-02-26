@@ -10,8 +10,8 @@ const checks = [
     pattern: /const\s+SSO_REDIRECT_PATH\s*=\s*"\/auth\/callback"/
   },
   {
-    name: "仅在回调路径处理 code/state",
-    pattern: /window\.location\.pathname\s*!==\s*SSO_REDIRECT_PATH/
+    name: "仅在固定回调路径或根路径兜底处理 code/state",
+    pattern: /isPrimaryCallbackPath[\s\S]*isRootFallbackCallbackPath/
   },
   {
     name: "state 一致性校验",

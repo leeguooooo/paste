@@ -395,10 +395,14 @@ export default function App() {
 
   const maybeHandleSsoCallback = useCallback(async (): Promise<void> => {
     if (!ssoEnabled) return;
-    if (window.location.pathname !== SSO_REDIRECT_PATH) return;
     const params = new URLSearchParams(window.location.search);
     const code = String(params.get("code") || "").trim();
     const state = String(params.get("state") || "").trim();
+    const isPrimaryCallbackPath = window.location.pathname === SSO_REDIRECT_PATH;
+    // Some edge setups rewrite /auth/callback -> / while preserving query params.
+    const isRootFallbackCallbackPath =
+      window.location.pathname === SSO_POST_AUTH_PATH && (code.length > 0 || state.length > 0);
+    if (!isPrimaryCallbackPath && !isRootFallbackCallbackPath) return;
     if (!code || !state) return;
 
     const expectedState = String(localStorage.getItem(SSO_STATE_KEY) || "").trim();
