@@ -23,7 +23,11 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          scope: "@leeguoo"
+          registry-url: "https://registry.npmjs.org"
       - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm run typecheck
       - run: npm --workspace @paste/macos run dist -- --mac dmg zip --${{ matrix.arch }}
       - name: Normalize macOS update metadata filenames
@@ -60,7 +64,11 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          scope: "@leeguoo"
+          registry-url: "https://registry.npmjs.org"
       - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm run typecheck
       - run: npm --workspace @paste/macos run dist -- --win nsis zip --x64
       - uses: actions/upload-artifact@v4
