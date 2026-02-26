@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { ClipItem, ClipType, ApiResponse, ClipListResponse } from "@paste/shared";
+import type { ClipItem, ApiResponse, ClipListResponse } from "@paste/shared";
 import { 
   Search, 
   Settings, 
@@ -29,6 +29,45 @@ type AuthMeData = {
   user: AuthUser | null;
   headerIdentityEnabled: boolean;
   authConfigured: boolean;
+  authMode?: "legacy" | "hybrid" | "sso";
+  authSource?: "legacy" | "sso" | null;
+};
+
+type SsoTokenData = {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresIn: number;
+  tokenType: string;
+};
+
+const SSO_ACCESS_TOKEN_KEY = "paste_sso_access_token";
+const SSO_REFRESH_TOKEN_KEY = "paste_sso_refresh_token";
+const SSO_STATE_KEY = "paste_sso_state";
+const SSO_CODE_VERIFIER_KEY = "paste_sso_code_verifier";
+const SSO_REDIRECT_PATH = "/auth/callback";
+const SSO_POST_AUTH_PATH = "/";
+const DEFAULT_SSO_ISSUER = (import.meta.env.VITE_SSO_ISSUER || "https://cloudflare-sso.pages.dev").trim();
+const DEFAULT_SSO_CLIENT_ID = (import.meta.env.VITE_SSO_CLIENT_ID || "misonote-paste-web").trim();
+
+const toBase64Url = (bytes: Uint8Array): string => {
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+
+const randomString = (length = 48): string => {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return toBase64Url(bytes).slice(0, length);
+};
+
+const buildPkceChallenge = async (verifier: string): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return toBase64Url(new Uint8Array(digest));
+};
+
+const buildSsoRedirectUri = (): string => {
+  if (typeof window === "undefined") return SSO_REDIRECT_PATH;
+  return new URL(SSO_REDIRECT_PATH, window.location.origin).toString();
 };
 
 // Default identity from localStorage for cross-device sync
@@ -57,17 +96,6 @@ const getImageSrc = (clip: ClipItem): string | null => {
   if (isValidImageDataUrl(clip.imageDataUrl)) return clip.imageDataUrl;
   if (typeof clip.imageUrl === "string" && clip.imageUrl.trim()) return clip.imageUrl;
   return null;
-};
-
-const getTypeAccent = (type: ClipType): string => {
-  switch (type) {
-    case "link": return "var(--accent-blue)";
-    case "text": return "var(--accent-orange)";
-    case "code": return "var(--accent-purple)";
-    case "html": return "var(--accent-green)";
-    case "image": return "var(--accent-pink)";
-    default: return "var(--accent-gray)";
-  }
 };
 
 const formatAgeShort = (createdAtMs: number): string => {
@@ -296,6 +324,8 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
+  const [ssoError, setSsoError] = useState("");
+  const [ssoAccessToken, setSsoAccessToken] = useState<string>(() => localStorage.getItem(SSO_ACCESS_TOKEN_KEY) || "");
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -307,21 +337,126 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const inflightImagePrefetchRef = useRef(new Set<string>());
   const effectiveUserId = authUser?.userId || userId;
+  const authDisplayName = (authUser?.githubLogin || authUser?.userId || "").trim();
   const effectiveDeviceId = deviceId.trim() || "web_browser";
+  const ssoEnabled = Boolean(DEFAULT_SSO_ISSUER && DEFAULT_SSO_CLIENT_ID);
 
-  const fetchHeaders = {
-    "x-user-id": effectiveUserId,
-    "x-device-id": effectiveDeviceId,
-    "content-type": "application/json"
+  const buildHeaders = (withContentType = true): Record<string, string> => {
+    const headers: Record<string, string> = {
+      "x-user-id": effectiveUserId,
+      "x-device-id": effectiveDeviceId
+    };
+    if (withContentType) {
+      headers["content-type"] = "application/json";
+    }
+    if (ssoAccessToken) {
+      headers.authorization = `Bearer ${ssoAccessToken}`;
+    }
+    return headers;
   };
+
+  const persistSsoTokens = (next: { accessToken: string; refreshToken?: string | null }) => {
+    setSsoAccessToken(next.accessToken);
+    localStorage.setItem(SSO_ACCESS_TOKEN_KEY, next.accessToken);
+    if (next.refreshToken) {
+      localStorage.setItem(SSO_REFRESH_TOKEN_KEY, next.refreshToken);
+    }
+  };
+
+  const clearSsoTokens = () => {
+    setSsoAccessToken("");
+    localStorage.removeItem(SSO_ACCESS_TOKEN_KEY);
+    localStorage.removeItem(SSO_REFRESH_TOKEN_KEY);
+  };
+
+  const exchangeSsoToken = async (
+    body:
+      | { grantType: "authorization_code"; code: string; codeVerifier: string; redirectUri: string }
+      | { grantType: "refresh_token"; refreshToken: string }
+  ): Promise<SsoTokenData | null> => {
+    const res = await fetch(`${API_BASE}/auth/sso/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    const data: ApiResponse<SsoTokenData> = await res.json();
+    if (!data.ok) {
+      console.error("SSO token exchange failed", data);
+      return null;
+    }
+    persistSsoTokens({
+      accessToken: data.data.accessToken,
+      refreshToken: data.data.refreshToken
+    });
+    return data.data;
+  };
+
+  const maybeHandleSsoCallback = useCallback(async (): Promise<void> => {
+    if (!ssoEnabled) return;
+    if (window.location.pathname !== SSO_REDIRECT_PATH) return;
+    const params = new URLSearchParams(window.location.search);
+    const code = String(params.get("code") || "").trim();
+    const state = String(params.get("state") || "").trim();
+    if (!code || !state) return;
+
+    const expectedState = String(localStorage.getItem(SSO_STATE_KEY) || "").trim();
+    const codeVerifier = String(localStorage.getItem(SSO_CODE_VERIFIER_KEY) || "").trim();
+    localStorage.removeItem(SSO_STATE_KEY);
+    localStorage.removeItem(SSO_CODE_VERIFIER_KEY);
+
+    if (!expectedState || !codeVerifier || expectedState !== state) {
+      console.error("SSO callback state mismatch");
+      setSsoError("SSO state mismatch. Please try signing in again.");
+      const clean = `${SSO_POST_AUTH_PATH}${window.location.hash || ""}` || "/";
+      window.history.replaceState({}, document.title, clean);
+      return;
+    }
+
+    const redirectUri = buildSsoRedirectUri();
+    const exchanged = await exchangeSsoToken({
+      grantType: "authorization_code",
+      code,
+      codeVerifier,
+      redirectUri
+    });
+    if (!exchanged) {
+      setSsoError("SSO token exchange failed. Please try again.");
+    } else {
+      setSsoError("");
+    }
+
+    const clean = `${SSO_POST_AUTH_PATH}${window.location.hash || ""}` || "/";
+    window.history.replaceState({}, document.title, clean);
+  }, [ssoEnabled]);
+
+  const startSsoSignIn = useCallback(async () => {
+    if (!ssoEnabled) return;
+    setSsoError("");
+    const state = randomString(32);
+    const codeVerifier = randomString(64);
+    const codeChallenge = await buildPkceChallenge(codeVerifier);
+    localStorage.setItem(SSO_STATE_KEY, state);
+    localStorage.setItem(SSO_CODE_VERIFIER_KEY, codeVerifier);
+
+    const redirectUri = buildSsoRedirectUri();
+    const authUrl = new URL("/authorize", DEFAULT_SSO_ISSUER);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("client_id", DEFAULT_SSO_CLIENT_ID);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("scope", "openid profile email");
+    authUrl.searchParams.set("state", state);
+    authUrl.searchParams.set("code_challenge", codeChallenge);
+    authUrl.searchParams.set("code_challenge_method", "S256");
+    window.location.assign(authUrl.toString());
+  }, [ssoEnabled]);
 
   const loadAuth = useCallback(async () => {
     setAuthLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/me`, {
-        headers: {
-          "x-device-id": effectiveDeviceId
-        }
+        headers: buildHeaders(false)
       });
       const data: ApiResponse<AuthMeData> = await res.json();
       if (data.ok) {
@@ -330,7 +465,11 @@ export default function App() {
       if (data.ok && data.data.authenticated && data.data.user) {
         setAuthUser(data.data.user);
         setUserId(data.data.user.userId);
+        setSsoError("");
       } else {
+        if (data.ok && data.data.authMode && data.data.authMode !== "legacy" && ssoAccessToken) {
+          clearSsoTokens();
+        }
         setAuthUser(null);
       }
     } catch (e) {
@@ -341,7 +480,7 @@ export default function App() {
       setAuthLoading(false);
       setAuthReady(true);
     }
-  }, [effectiveDeviceId]);
+  }, [effectiveDeviceId, effectiveUserId, ssoAccessToken]);
 
   const loadClips = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
@@ -353,7 +492,7 @@ export default function App() {
       params.append("lite", "1");
 
       const res = await fetch(`${API_BASE}/clips?${params.toString()}`, {
-        headers: fetchHeaders
+        headers: buildHeaders(false)
       });
       const data: ApiResponse<ClipListResponse> = await res.json();
       if (data.ok) {
@@ -365,12 +504,12 @@ export default function App() {
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [query, effectiveUserId, effectiveDeviceId]);
+  }, [query, effectiveUserId, effectiveDeviceId, ssoAccessToken]);
 
   const fetchClipById = useCallback(async (id: string): Promise<ClipItem | null> => {
     try {
       const res = await fetch(`${API_BASE}/clips/${encodeURIComponent(id)}`, {
-        headers: fetchHeaders
+        headers: buildHeaders(false)
       });
       const data: ApiResponse<ClipItem> = await res.json();
       return data.ok ? data.data : null;
@@ -378,7 +517,7 @@ export default function App() {
       console.error(e);
       return null;
     }
-  }, [effectiveUserId, effectiveDeviceId]);
+  }, [effectiveUserId, effectiveDeviceId, ssoAccessToken]);
 
   // Best-effort: if list results are "lite" (no imageDataUrl), gradually hydrate
   // image clips so previews can render without requiring a copy action.
@@ -418,8 +557,11 @@ export default function App() {
   }, [clips, fetchClipById]);
 
   useEffect(() => {
-    void loadAuth();
-  }, [loadAuth]);
+    void (async () => {
+      await maybeHandleSsoCallback();
+      await loadAuth();
+    })();
+  }, [maybeHandleSsoCallback, loadAuth]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -528,7 +670,7 @@ export default function App() {
     try {
       await fetch(`${API_BASE}/clips/${clip.id}`, {
         method: "PATCH",
-        headers: fetchHeaders,
+        headers: buildHeaders(),
         body: JSON.stringify({ isFavorite: !clip.isFavorite, clientUpdatedAt: Date.now() })
       });
       void loadClips();
@@ -549,13 +691,14 @@ export default function App() {
     setDeviceId(next);
   };
 
-  const signInWithGithub = () => {
-    const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
-    window.location.href = `${API_BASE}/auth/github/start?next=${next}`;
+  const signIn = () => {
+    if (!ssoEnabled) return;
+    void startSsoSignIn();
   };
 
-  const logoutGithub = async () => {
+  const logoutAuth = async () => {
     try {
+      clearSsoTokens();
       await fetch(`${API_BASE}/auth/logout`, {
         method: "POST",
         headers: { "content-type": "application/json" }
@@ -613,7 +756,7 @@ export default function App() {
         </a>
         <nav className="marketing-links" aria-label="Primary">
           {authUser ? (
-            <span style={{ fontSize: 12, opacity: 0.75 }}>@{authUser.githubLogin}</span>
+            <span className="auth-login">{authDisplayName}</span>
           ) : null}
           <a href="https://github.com/leeguooooo/paste" target="_blank" rel="noopener noreferrer">Source Code</a>
           <a className="nav-cta" href="https://github.com/leeguooooo/paste/releases/latest" target="_blank" rel="noopener noreferrer">
@@ -684,9 +827,9 @@ export default function App() {
 
       <div className="history-shelf" id="demo">
         <div className="toolbar">
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={18} style={{ position: 'absolute', left: 14, top: 12, color: 'rgba(255,255,255,0.4)' }} />
+          <div className="toolbar-search-wrap">
+            <div className="toolbar-search-input-wrap">
+              <Search size={18} className="search-icon" />
               <input
                 ref={searchInputRef}
                 className="search-input"
@@ -706,14 +849,11 @@ export default function App() {
             const isSelected = index === selectedIndex;
             const isCopied = copiedId === clip.id;
             const device = getDeviceMeta(clip.deviceId);
-            const accent = getTypeAccent(clip.type);
             const age = formatAgeShort(clip.createdAt);
-            const cardStyle = { ["--accent" as any]: accent } as React.CSSProperties;
             return (
               <div 
                 key={clip.id} 
-                className={`clip-card ${isSelected ? 'selected' : ''}`}
-                style={cardStyle}
+                className={`clip-card type-${clip.type} ${isSelected ? 'selected' : ''}`}
                 onClick={() => {
                   setSelectedIndex(index);
                   if (clip.__demo) {
@@ -766,36 +906,41 @@ export default function App() {
       {showSettings && (
         <div className="settings-overlay" onClick={() => setShowSettings(false)}>
           <div className="settings-panel" onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 24 }}>
+            <div className="settings-header">
               <h2>Cloud Sync Settings</h2>
               <button className="icon-btn" onClick={() => setShowSettings(false)}><X size={24} /></button>
             </div>
             <div className="settings-section">
               <div className="settings-row">
-                <label>GitHub Account</label>
+                <label>Cloudflare SSO Account</label>
                 {authUser ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 13, opacity: 0.8 }}>Signed in as @{authUser.githubLogin}</span>
+                  <div className="settings-auth-meta">
+                    <span className="settings-auth-user">Signed in as {authDisplayName}</span>
                     <button
-                      className="btn-save"
+                      className="btn-save btn-save-dark btn-save-inline"
                       type="button"
-                      style={{ width: "auto", background: "#2f3542", border: "none", padding: "8px 12px", borderRadius: 8, color: "white", fontWeight: 600 }}
-                      onClick={() => void logoutGithub()}
+                      onClick={() => void logoutAuth()}
                     >
                       Sign out
                     </button>
                   </div>
                 ) : (
                   <button
-                    className="btn-save"
+                    className="btn-save btn-save-outline btn-save-inline"
                     type="button"
-                    style={{ width: "auto", background: "#111827", border: "1px solid rgba(255,255,255,0.2)", padding: "8px 12px", borderRadius: 8, color: "white", fontWeight: 600 }}
-                    onClick={signInWithGithub}
+                    onClick={signIn}
                     disabled={authLoading || !authConfigured}
                   >
-                    {!authConfigured ? "GitHub auth not configured" : (authLoading ? "Checking..." : "Sign in with GitHub")}
+                    {!authConfigured
+                      ? "SSO not configured"
+                      : authLoading
+                        ? "Checking..."
+                        : "Sign in with Cloudflare SSO"}
                   </button>
                 )}
+                {ssoError ? (
+                  <div className="settings-auth-error" role="alert">{ssoError}</div>
+                ) : null}
               </div>
               <div className="settings-row">
                 <label>Account User ID</label>
@@ -812,16 +957,15 @@ export default function App() {
               <div className="settings-row">
                 <label>Regenerate Device</label>
                 <button
-                  className="btn-save"
+                  className="btn-save btn-save-dark btn-save-inline"
                   type="button"
-                  style={{ width: "auto", background: "#2f3542", border: "none", padding: "8px 12px", borderRadius: 8, color: "white", fontWeight: 600 }}
                   onClick={resetDeviceId}
                 >
                   New Device ID
                 </button>
               </div>
             </div>
-            <button className="btn-save" style={{width:'100%', background:'#007aff', border:'none', padding:12, borderRadius:8, color:'white', fontWeight:600}} onClick={saveSettings}>
+            <button className="btn-save btn-save-primary" onClick={saveSettings}>
               Save and Sync
             </button>
           </div>

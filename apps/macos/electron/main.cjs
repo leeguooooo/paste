@@ -182,7 +182,7 @@ process.on("uncaughtException", (err) => {
   throw err;
 });
 
-const { randomUUID, createHash } = require("node:crypto");
+const { randomUUID, createHash, randomBytes } = require("node:crypto");
 const {
   app,
   BrowserWindow,
@@ -198,6 +198,7 @@ const {
   systemPreferences
 } = require("electron");
 const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
@@ -212,6 +213,12 @@ const parsePort = (raw, fallback) => {
 const devPort = parsePort(process.env.PASTE_DEV_PORT ?? process.env.VITE_PORT, 5174);
 const devUrl = `http://127.0.0.1:${devPort}`;
 const trayDebug = process.env.PASTE_TRAY_DEBUG === "1";
+const DEFAULT_SSO_ISSUER = String(process.env.PASTE_SSO_ISSUER || "https://cloudflare-sso.pages.dev")
+  .trim()
+  .replace(/\/+$/, "");
+const DEFAULT_SSO_CLIENT_ID = String(process.env.PASTE_SSO_CLIENT_ID || "misonote-paste-macos").trim() || "misonote-paste-macos";
+const SSO_AUTH_TIMEOUT_MS = Number.parseInt(String(process.env.PASTE_SSO_AUTH_TIMEOUT_MS || "300000"), 10) || 300000;
+const SSO_LOOPBACK_PORT = parsePort(process.env.PASTE_SSO_LOOPBACK_PORT, 45897);
 
 const configFile = path.join(app.getPath("userData"), "pastyx-macos-config.json");
 const localClipsFile = path.join(app.getPath("userData"), "pastyx-local-clips.json");
@@ -1237,6 +1244,215 @@ const remoteRequest = async (cfg, pathname, init = {}) => {
   }
 };
 
+const toBase64Url = (buf) =>
+  Buffer.from(buf)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
+const makePkcePair = () => {
+  const verifier = toBase64Url(randomBytes(48));
+  const challenge = toBase64Url(createHash("sha256").update(verifier).digest());
+  return { verifier, challenge };
+};
+
+const sendLoopbackHtml = (res, title, message, statusCode = 200) => {
+  try {
+    res.statusCode = statusCode;
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.end(
+      `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h2>${title}</h2><p>${message}</p></body></html>`
+    );
+  } catch {
+    // ignore
+  }
+};
+
+const runSsoAuthorizationFlow = async () => {
+  const issuer = DEFAULT_SSO_ISSUER;
+  const clientId = DEFAULT_SSO_CLIENT_ID;
+  if (!issuer) {
+    throw new Error("SSO issuer is not configured.");
+  }
+  if (!clientId) {
+    throw new Error("SSO client id is not configured.");
+  }
+
+  const state = toBase64Url(randomBytes(24));
+  const { verifier, challenge } = makePkcePair();
+  const callbackPath = "/auth/sso/callback";
+
+  const callbackResult = await new Promise((resolve, reject) => {
+    let settled = false;
+    const server = http.createServer((req, res) => {
+      const requestUrl = new URL(String(req.url || "/"), `http://127.0.0.1:${SSO_LOOPBACK_PORT}`);
+      if (requestUrl.pathname !== callbackPath) {
+        sendLoopbackHtml(res, "Not Found", "Invalid callback path.", 404);
+        return;
+      }
+
+      const errorCode = String(requestUrl.searchParams.get("error") || "").trim();
+      const errorDescription = String(requestUrl.searchParams.get("error_description") || "").trim();
+      if (errorCode) {
+        sendLoopbackHtml(res, "Sign-in Failed", errorDescription || errorCode, 400);
+        if (!settled) {
+          settled = true;
+          server.close(() => reject(new Error(errorDescription || errorCode)));
+        }
+        return;
+      }
+
+      const code = String(requestUrl.searchParams.get("code") || "").trim();
+      const returnedState = String(requestUrl.searchParams.get("state") || "").trim();
+      if (!code || !returnedState || returnedState !== state) {
+        sendLoopbackHtml(res, "Sign-in Failed", "Invalid SSO callback state.", 400);
+        if (!settled) {
+          settled = true;
+          server.close(() => reject(new Error("Invalid SSO callback state.")));
+        }
+        return;
+      }
+
+      sendLoopbackHtml(res, "Sign-in Complete", "You can close this tab and return to Pastyx.");
+      if (!settled) {
+        settled = true;
+        server.close(() =>
+          resolve({
+            code,
+            redirectUri: `http://127.0.0.1:${SSO_LOOPBACK_PORT}${callbackPath}`
+          })
+        );
+      }
+    });
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        server.close(() => reject(new Error("SSO sign-in timed out. Please try again.")));
+      } catch {
+        reject(new Error("SSO sign-in timed out. Please try again."));
+      }
+    }, Math.max(30_000, SSO_AUTH_TIMEOUT_MS));
+
+    timer.unref?.();
+
+    server.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    server.listen(SSO_LOOPBACK_PORT, "127.0.0.1", async () => {
+      clearTimeout(timer);
+      const timeoutAfterOpen = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          server.close(() => reject(new Error("SSO sign-in timed out. Please try again.")));
+        } catch {
+          reject(new Error("SSO sign-in timed out. Please try again."));
+        }
+      }, Math.max(30_000, SSO_AUTH_TIMEOUT_MS));
+      timeoutAfterOpen.unref?.();
+
+      try {
+        const redirectUri = `http://127.0.0.1:${SSO_LOOPBACK_PORT}${callbackPath}`;
+        const authUrl = new URL("/authorize", issuer);
+        authUrl.searchParams.set("response_type", "code");
+        authUrl.searchParams.set("client_id", clientId);
+        authUrl.searchParams.set("redirect_uri", redirectUri);
+        authUrl.searchParams.set("scope", "openid profile email");
+        authUrl.searchParams.set("state", state);
+        authUrl.searchParams.set("code_challenge", challenge);
+        authUrl.searchParams.set("code_challenge_method", "S256");
+        await shell.openExternal(authUrl.toString());
+      } catch (error) {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeoutAfterOpen);
+          try {
+            server.close(() => reject(error instanceof Error ? error : new Error("Failed to open browser")));
+          } catch {
+            reject(error instanceof Error ? error : new Error("Failed to open browser"));
+          }
+        }
+      }
+    });
+  }).catch((error) => {
+    throw error instanceof Error ? error : new Error("SSO authorization failed.");
+  });
+
+  return {
+    code: String(callbackResult?.code || "").trim(),
+    codeVerifier: verifier,
+    redirectUri: String(callbackResult?.redirectUri || "").trim()
+  };
+};
+
+const startSsoSignIn = async (cfg) => {
+  if (!isRemoteEnabled(cfg)) {
+    return localFail("Please configure API Endpoint first");
+  }
+
+  const authz = await runSsoAuthorizationFlow().catch((error) => {
+    return { error: error instanceof Error ? error.message : "SSO authorization failed." };
+  });
+
+  if (!authz || authz.error) {
+    return localFail(String(authz?.error || "SSO authorization failed."));
+  }
+  if (!authz.code || !authz.codeVerifier || !authz.redirectUri) {
+    return localFail("SSO authorization payload is invalid.");
+  }
+
+  const exchangeRes = await remoteRequest(cfg, "/auth/sso/token", {
+    method: "POST",
+    body: JSON.stringify({
+      grantType: "authorization_code",
+      code: authz.code,
+      codeVerifier: authz.codeVerifier,
+      redirectUri: authz.redirectUri
+    })
+  });
+  if (!exchangeRes?.ok) {
+    return exchangeRes || localFail("Failed to exchange SSO token.");
+  }
+
+  const accessToken = String(exchangeRes?.data?.accessToken || "").trim();
+  if (!accessToken) {
+    return localFail("SSO access token is missing.");
+  }
+
+  let nextCfg = writeConfig({
+    ...cfg,
+    authToken: accessToken,
+    authGithubLogin: ""
+  });
+
+  const me = await remoteRequest(nextCfg, "/auth/me");
+  const authUser = me?.ok ? me?.data?.user : null;
+  if (me?.ok && me?.data?.authenticated && authUser) {
+    const nextUserId = String(authUser?.userId || nextCfg.userId || "").trim() || nextCfg.userId;
+    const nextLogin = String(authUser?.githubLogin || authUser?.userId || "").trim();
+    nextCfg = writeConfig({
+      ...nextCfg,
+      userId: nextUserId,
+      authGithubLogin: nextLogin
+    });
+  }
+
+  return localOk({
+    status: "approved",
+    user: {
+      userId: String(nextCfg.userId || ""),
+      githubLogin: String(nextCfg.authGithubLogin || nextCfg.userId || "")
+    }
+  });
+};
+
 const createClipFromPayload = async (payload, source = "watcher") => {
   const cfg = readConfig();
   const now = Date.now();
@@ -1845,7 +2061,7 @@ const setupAutoUpdate = () => {
     }
   });
 
-  // Check shortly after startup; GitHub API can be slow on first request.
+  // Check shortly after startup; update feed can be slow on first request.
   setTimeout(() => {
     try {
       void autoUpdater.checkForUpdates();
@@ -2056,71 +2272,9 @@ const setupIpc = () => {
     });
   });
 
-  ipcMain.handle("auth:github-device-start", async () => {
+  ipcMain.handle("auth:sso-start", async () => {
     const cfg = readConfig();
-    if (!isRemoteEnabled(cfg)) {
-      return localFail("Please configure API Endpoint first");
-    }
-
-    const res = await remoteRequest(cfg, "/auth/github/device/start", {
-      method: "POST",
-      body: JSON.stringify({})
-    });
-    if (res?.ok && res?.data?.verificationUriComplete) {
-      try {
-        await shell.openExternal(String(res.data.verificationUriComplete));
-      } catch {
-        // ignore
-      }
-    } else if (res?.ok && res?.data?.verificationUri) {
-      try {
-        await shell.openExternal(String(res.data.verificationUri));
-      } catch {
-        // ignore
-      }
-    }
-    return res;
-  });
-
-  ipcMain.handle("auth:github-device-poll", async (_, deviceCode) => {
-    const cfg = readConfig();
-    if (!isRemoteEnabled(cfg)) {
-      return localFail("Please configure API Endpoint first");
-    }
-
-    const code = String(deviceCode || "").trim();
-    if (!code) {
-      return { ok: false, code: "INVALID_DEVICE_CODE", message: "deviceCode is required" };
-    }
-
-    const res = await remoteRequest(cfg, "/auth/github/device/poll", {
-      method: "POST",
-      body: JSON.stringify({ deviceCode: code })
-    });
-
-    if (
-      res?.ok &&
-      res?.data?.status === "approved" &&
-      typeof res?.data?.accessToken === "string" &&
-      res.data.accessToken.trim()
-    ) {
-      const user = res?.data?.user || {};
-      const nextCfg = writeConfig({
-        ...cfg,
-        authToken: res.data.accessToken.trim(),
-        authGithubLogin: String(user.githubLogin || "").trim(),
-        userId: String(user.userId || cfg.userId || "").trim() || cfg.userId
-      });
-      return localOk({
-        status: "approved",
-        user: {
-          userId: nextCfg.userId,
-          githubLogin: nextCfg.authGithubLogin
-        }
-      });
-    }
-
-    return res;
+    return startSsoSignIn(cfg);
   });
 
   ipcMain.handle("auth:logout", async () => {
@@ -2166,7 +2320,7 @@ const setupIpc = () => {
       return localFail("Please configure API Endpoint first");
     }
     if (!isTokenAuthEnabled(cfg)) {
-      return localFail("Please sign in with GitHub first");
+      return localFail("Please sign in with Cloudflare SSO first");
     }
 
     const userId = String(cfg?.userId || "").trim();

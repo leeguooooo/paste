@@ -150,29 +150,38 @@ binding = "CACHE"
 id = "<your-kv-namespace-id>"
 ```
 
-Optional GitHub auth (recommended for Web):
-
-```bash
-# set in apps/api (Cloudflare Worker)
-wrangler secret put GITHUB_CLIENT_ID
-wrangler secret put GITHUB_CLIENT_SECRET
-wrangler secret put AUTH_SECRET
-```
-
-In GitHub OAuth App settings:
-
-- Enable regular OAuth callback for Web: `/v1/auth/github/callback`
-- Enable Device Flow for macOS app sign-in
-
-Optional auth-related vars (`apps/api/wrangler.toml`):
+Cloudflare SSO auth (Web):
 
 ```toml
 [vars]
-# Legacy header mode on/off. Recommended production value: "0".
+# Recommended production mode.
+AUTH_MODE = "sso"
+SSO_ISSUER = "https://cloudflare-sso.pages.dev"
+SSO_CLIENT_ID = "misonote-paste-web"
+# Optional tenant entitlement check:
+# SSO_ENTITLEMENT_TENANT_ID = "tenant-misonote"
+# SSO_REQUIRED_ENTITLEMENT_KEY = "membership.all_apps"
+
+# Legacy header mode on/off. Keep "0" in production.
 ALLOW_HEADER_IDENTITY = "0"
-# Optional explicit callback URL if needed by your OAuth app settings.
-# AUTH_GITHUB_REDIRECT_URI = "https://paste-web.example.com/v1/auth/github/callback"
 ```
+
+Web app env (optional, recommended to set explicitly):
+
+```bash
+# apps/web/.env.local
+VITE_SSO_ISSUER=https://cloudflare-sso.pages.dev
+VITE_SSO_CLIENT_ID=misonote-paste-web
+# Fixed callback allowlist path used by web:
+# https://paste-web.misonote.com/auth/callback
+# https://paste.misonote.com/auth/callback
+```
+
+Client split (recommended):
+
+- Web: `misonote-paste-web`
+- macOS: `misonote-paste-macos`
+- Do not reuse one `client_id` across web and desktop loopback callbacks.
 
 Run dev:
 
@@ -200,21 +209,26 @@ To enable sync, set `API Base` to one of:
 
 Then keep `User ID` consistent across devices.
 
+Desktop SSO env (optional):
+
+```bash
+# apps/macos/.env.local
+PASTE_SSO_ISSUER=https://cloudflare-sso.pages.dev
+PASTE_SSO_CLIENT_ID=misonote-paste-macos
+```
+
 ## API
 
 Web auth endpoints:
 
-- `GET /v1/auth/github/start` (redirect to GitHub OAuth)
-- `GET /v1/auth/github/callback` (OAuth callback)
-- `POST /v1/auth/github/device/start` (start Device Flow for desktop app)
-- `POST /v1/auth/github/device/poll` (poll Device Flow status)
+- `POST /v1/auth/sso/token` (exchange authorization code/refresh token with SSO issuer)
 - `GET /v1/auth/me` (current session)
-- `POST /v1/auth/logout` (clear session cookie)
+- `POST /v1/auth/logout` (clear local auth state/cookies)
 
 Identity for business APIs:
 
-- Web (signed-in): session cookie from GitHub login
-- Legacy/desktop mode: `x-user-id` + `x-device-id` headers
+- Web (signed-in): `Authorization: Bearer <SSO access token>` + `x-device-id`
+- Legacy mode only: `x-user-id` + `x-device-id` headers
 
 Endpoints:
 
