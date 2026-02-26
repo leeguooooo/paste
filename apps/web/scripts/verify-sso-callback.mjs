@@ -6,6 +6,10 @@ const source = readFileSync(appPath, "utf8");
 
 const checks = [
   {
+    name: "默认 issuer 指向 account 域名",
+    pattern: /VITE_SSO_ISSUER\s*\|\|\s*"https:\/\/account\.misonote\.com"/
+  },
+  {
     name: "固定回调路径常量",
     pattern: /const\s+SSO_REDIRECT_PATH\s*=\s*"\/auth\/callback"/
   },

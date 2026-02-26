@@ -46,7 +46,7 @@ const SSO_STATE_KEY = "paste_sso_state";
 const SSO_CODE_VERIFIER_KEY = "paste_sso_code_verifier";
 const SSO_REDIRECT_PATH = "/auth/callback";
 const SSO_POST_AUTH_PATH = "/";
-const DEFAULT_SSO_ISSUER = (import.meta.env.VITE_SSO_ISSUER || "https://cloudflare-sso.pages.dev").trim();
+const DEFAULT_SSO_ISSUER = (import.meta.env.VITE_SSO_ISSUER || "https://account.misonote.com").trim();
 const DEFAULT_SSO_CLIENT_ID = (import.meta.env.VITE_SSO_CLIENT_ID || "misonote-paste-web").trim();
 
 const toBase64Url = (bytes: Uint8Array): string => {

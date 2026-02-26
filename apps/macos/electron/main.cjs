@@ -213,7 +213,7 @@ const parsePort = (raw, fallback) => {
 const devPort = parsePort(process.env.PASTE_DEV_PORT ?? process.env.VITE_PORT, 5174);
 const devUrl = `http://127.0.0.1:${devPort}`;
 const trayDebug = process.env.PASTE_TRAY_DEBUG === "1";
-const DEFAULT_SSO_ISSUER = String(process.env.PASTE_SSO_ISSUER || "https://cloudflare-sso.pages.dev")
+const DEFAULT_SSO_ISSUER = String(process.env.PASTE_SSO_ISSUER || "https://account.misonote.com")
   .trim()
   .replace(/\/+$/, "");
 const DEFAULT_SSO_CLIENT_ID = String(process.env.PASTE_SSO_CLIENT_ID || "misonote-paste-macos").trim() || "misonote-paste-macos";

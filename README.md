@@ -156,7 +156,7 @@ Cloudflare SSO auth (Web):
 [vars]
 # Recommended production mode.
 AUTH_MODE = "sso"
-SSO_ISSUER = "https://cloudflare-sso.pages.dev"
+SSO_ISSUER = "https://account.misonote.com"
 SSO_CLIENT_ID = "misonote-paste-web"
 # Optional tenant entitlement check:
 # SSO_ENTITLEMENT_TENANT_ID = "tenant-misonote"
@@ -170,7 +170,7 @@ Web app env (optional, recommended to set explicitly):
 
 ```bash
 # apps/web/.env.local
-VITE_SSO_ISSUER=https://cloudflare-sso.pages.dev
+VITE_SSO_ISSUER=https://account.misonote.com
 VITE_SSO_CLIENT_ID=misonote-paste-web
 # Fixed callback allowlist path used by web:
 # https://paste-web.misonote.com/auth/callback
@@ -213,7 +213,7 @@ Desktop SSO env (optional):
 
 ```bash
 # apps/macos/.env.local
-PASTE_SSO_ISSUER=https://cloudflare-sso.pages.dev
+PASTE_SSO_ISSUER=https://account.misonote.com
 PASTE_SSO_CLIENT_ID=misonote-paste-macos
 ```
 

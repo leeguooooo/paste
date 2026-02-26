@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:prod": "VITE_SSO_ISSUER=${VITE_SSO_ISSUER:-https://account.misonote.com} npm run build",
     "preview": "vite preview",
     "verify:sso-callback": "node ./scripts/verify-sso-callback.mjs",
     "pages:dev": "wrangler pages dev ./dist",
-    "pages:deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web --branch main --commit-dirty=true --commit-message \"deploy web\"",
+    "pages:deploy": "npm run build:prod && wrangler pages deploy ./dist --project-name paste-web --branch main --commit-dirty=true --commit-message \"deploy web\"",
     "typecheck": "tsc --noEmit",
-    "deploy": "npm run build && wrangler pages deploy ./dist --project-name paste-web --branch main --commit-dirty=true --commit-message \"deploy web\""
+    "deploy": "npm run build:prod && wrangler pages deploy ./dist --project-name paste-web --branch main --commit-dirty=true --commit-message \"deploy web\""
   },
   "dependencies": {
     "@leeguoo/design-tokens": "~0.2.0",
