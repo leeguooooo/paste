@@ -177,6 +177,23 @@ VITE_SSO_CLIENT_ID=misonote-paste-web
 # https://paste.misonote.com/auth/callback
 ```
 
+App portal subpath build (`https://app.misonote.com/paste`):
+
+```bash
+# apps/web subpath config
+VITE_BASE_PATH=/paste/
+VITE_API_BASE=/paste/v1
+VITE_SSO_REDIRECT_PATH=/paste/auth/callback
+VITE_SSO_POST_AUTH_PATH=/paste/
+```
+
+Build command for portal subpath:
+
+```bash
+cd apps/web
+npm run build:app-subpath
+```
+
 Client split (recommended):
 
 - Web: `misonote-paste-web`

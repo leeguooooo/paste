@@ -3,10 +3,16 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 
 const normalizeSiteUrl = (value: string): string => value.replace(/\/+$/, "");
+const normalizeBasePath = (value: string): string => {
+  const trimmed = String(value || "").trim();
+  const prefixed = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return prefixed.endsWith("/") ? prefixed : `${prefixed}/`;
+};
 
 const siteUrl = normalizeSiteUrl(process.env.PASTE_SITE_URL || "https://paste-web.misonote.com");
 const ogImageUrl = process.env.PASTE_OG_IMAGE_URL || `${siteUrl}/icon-512.svg`;
 const githubUrl = process.env.PASTE_GITHUB_URL || "https://github.com/leeguooooo/paste";
+const basePath = normalizeBasePath(process.env.VITE_BASE_PATH || "/");
 
 const makeSitemapXml = (baseUrl: string): string => `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -19,6 +25,7 @@ const makeSitemapXml = (baseUrl: string): string => `<?xml version="1.0" encodin
 `;
 
 export default defineConfig({
+  base: basePath,
   plugins: [
     react(),
     {

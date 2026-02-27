@@ -1,7 +1,15 @@
 const CACHE_PREFIX = "pastyx-";
 const CACHE_NAME = "pastyx-v2";
-const APP_SHELL_PATH = "/index.html";
-const PRECACHE_PATHS = [APP_SHELL_PATH, "/manifest.webmanifest"];
+
+const getScopeBasePath = () => {
+  const scopePath = new URL(self.registration.scope).pathname;
+  const normalized = scopePath.endsWith("/") ? scopePath : `${scopePath}/`;
+  return normalized.replace(/\/{2,}/g, "/");
+};
+
+const SCOPE_BASE_PATH = getScopeBasePath();
+const APP_SHELL_PATH = `${SCOPE_BASE_PATH}index.html`;
+const PRECACHE_PATHS = [APP_SHELL_PATH, `${SCOPE_BASE_PATH}manifest.webmanifest`];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

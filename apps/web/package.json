@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:prod": "VITE_SSO_ISSUER=${VITE_SSO_ISSUER:-https://account.misonote.com} npm run build",
+    "build:app-subpath": "VITE_BASE_PATH=/paste/ VITE_API_BASE=/paste/v1 VITE_SSO_REDIRECT_PATH=/paste/auth/callback VITE_SSO_POST_AUTH_PATH=/paste/ VITE_SSO_ISSUER=${VITE_SSO_ISSUER:-https://account.misonote.com} npm run build",
     "preview": "vite preview",
     "verify:sso-callback": "node ./scripts/verify-sso-callback.mjs",
     "pages:dev": "wrangler pages dev ./dist",

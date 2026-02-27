@@ -10,6 +10,8 @@ import "./index.css";
 
 const SW_CACHE_PREFIX = "pastyx-";
 const SW_CACHE_NAME = "pastyx-v2";
+const BASE_URL = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "/");
+const SW_URL = `${BASE_URL}sw.js`;
 
 const clearLegacyServiceWorkerCaches = async (): Promise<void> => {
   if (!("caches" in window)) {
@@ -33,7 +35,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register("/sw.js")
+      .register(SW_URL)
       .then(() => clearLegacyServiceWorkerCaches())
       .catch((err) => {
         console.log("Service Worker registration failed: ", err);

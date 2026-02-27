@@ -16,7 +16,26 @@ import {
   Cpu
 } from "lucide-react";
 
-const API_BASE = "/v1";
+const normalizePath = (value: string, fallback: string): string => {
+  const raw = String(value || "").trim() || fallback;
+  const prefixed = raw.startsWith("/") ? raw : `/${raw}`;
+  const compact = prefixed.replace(/\/{2,}/g, "/");
+  return compact === "" ? fallback : compact;
+};
+
+const normalizeDirPath = (value: string, fallback: string): string => {
+  const normalized = normalizePath(value, fallback);
+  return normalized.endsWith("/") ? normalized : `${normalized}/`;
+};
+
+const normalizePathname = (value: string): string => {
+  const normalized = String(value || "").replace(/\/+$/, "");
+  return normalized === "" ? "/" : normalized;
+};
+
+const BASE_URL = normalizeDirPath(import.meta.env.BASE_URL || "/", "/");
+const resolveAssetPath = (relativePath: string): string => `${BASE_URL}${relativePath.replace(/^\/+/, "")}`;
+const API_BASE = normalizePath(import.meta.env.VITE_API_BASE || "/v1", "/v1").replace(/\/+$/, "");
 
 type ClipCardItem = ClipItem & { __demo?: boolean };
 type AuthUser = {
@@ -44,8 +63,8 @@ const SSO_ACCESS_TOKEN_KEY = "paste_sso_access_token";
 const SSO_REFRESH_TOKEN_KEY = "paste_sso_refresh_token";
 const SSO_STATE_KEY = "paste_sso_state";
 const SSO_CODE_VERIFIER_KEY = "paste_sso_code_verifier";
-const SSO_REDIRECT_PATH = "/auth/callback";
-const SSO_POST_AUTH_PATH = "/";
+const SSO_REDIRECT_PATH = normalizePath(import.meta.env.VITE_SSO_REDIRECT_PATH || "/auth/callback", "/auth/callback");
+const SSO_POST_AUTH_PATH = normalizeDirPath(import.meta.env.VITE_SSO_POST_AUTH_PATH || "/", "/");
 const DEFAULT_SSO_ISSUER = (import.meta.env.VITE_SSO_ISSUER || "https://account.misonote.com").trim();
 const DEFAULT_SSO_CLIENT_ID = (import.meta.env.VITE_SSO_CLIENT_ID || "misonote-paste-web").trim();
 
@@ -311,7 +330,7 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       type: "image",
       summary: "图片示例",
       content: "Pastyx icon",
-      imageUrl: "/icon-512.svg",
+      imageUrl: resolveAssetPath("icon-512.svg"),
       createdAt: now - 240_000,
     },
   ];
@@ -398,10 +417,11 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const code = String(params.get("code") || "").trim();
     const state = String(params.get("state") || "").trim();
-    const isPrimaryCallbackPath = window.location.pathname === SSO_REDIRECT_PATH;
+    const currentPath = normalizePathname(window.location.pathname);
+    const isPrimaryCallbackPath = currentPath === normalizePathname(SSO_REDIRECT_PATH);
     // Some edge setups rewrite /auth/callback -> / while preserving query params.
     const isRootFallbackCallbackPath =
-      window.location.pathname === SSO_POST_AUTH_PATH && (code.length > 0 || state.length > 0);
+      currentPath === normalizePathname(SSO_POST_AUTH_PATH) && (code.length > 0 || state.length > 0);
     if (!isPrimaryCallbackPath && !isRootFallbackCallbackPath) return;
     if (!code || !state) return;
 
@@ -656,7 +676,7 @@ export default function App() {
   const handleCopyDemo = async (clip: ClipCardItem) => {
     try {
       if (clip.type === "image") {
-        const url = clip.imageUrl || "/icon-512.svg";
+        const url = clip.imageUrl || resolveAssetPath("icon-512.svg");
         await navigator.clipboard.writeText(String(url));
       } else {
         await navigator.clipboard.writeText(clip.content);
@@ -754,7 +774,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="marketing-nav">
-        <a className="brand" href="/" aria-label="Pastyx home">
+        <a className="brand" href={BASE_URL} aria-label="Pastyx home">
           <span className="brand-mark" aria-hidden="true">P</span>
           <span className="brand-name">Pastyx</span>
         </a>
@@ -807,7 +827,7 @@ export default function App() {
                   <span className="device-browser-title">pastyx-web.misonote.com</span>
                 </div>
                 <img
-                  src="/product/shots/web-live-1920x1080.png"
+                  src={resolveAssetPath("product/shots/web-live-1920x1080.png")}
                   alt=""
                   className="device-browser-img"
                   loading="lazy"
@@ -817,7 +837,7 @@ export default function App() {
 
               <div className="device-phone">
                 <img
-                  src="/product/shots/web-live-iphone14.png"
+                  src={resolveAssetPath("product/shots/web-live-iphone14.png")}
                   alt=""
                   className="device-phone-img"
                   loading="lazy"
