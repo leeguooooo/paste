@@ -36,6 +36,12 @@ const normalizePathname = (value: string): string => {
 const BASE_URL = normalizeDirPath(import.meta.env.BASE_URL || "/", "/");
 const resolveAssetPath = (relativePath: string): string => `${BASE_URL}${relativePath.replace(/^\/+/, "")}`;
 const API_BASE = normalizePath(import.meta.env.VITE_API_BASE || "/v1", "/v1").replace(/\/+$/, "");
+const PORTAL_HOME_URL = (() => {
+  const configured = String(import.meta.env.VITE_PORTAL_HOME_URL || "").trim();
+  if (configured) return configured;
+  if (typeof window !== "undefined" && window.location.hostname === "app.misonote.com") return "/";
+  return "https://app.misonote.com/";
+})();
 
 type ClipCardItem = ClipItem & { __demo?: boolean };
 type AuthUser = {
@@ -782,6 +788,7 @@ export default function App() {
           {authUser ? (
             <span className="auth-login">{authDisplayName}</span>
           ) : null}
+          <a className="nav-back" href={PORTAL_HOME_URL}>Back to App Center</a>
           <a href="https://github.com/leeguooooo/paste" target="_blank" rel="noopener noreferrer">Source Code</a>
           <a className="nav-cta" href="https://github.com/leeguooooo/paste/releases/latest" target="_blank" rel="noopener noreferrer">
             Download for macOS

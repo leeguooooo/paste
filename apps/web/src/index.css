@@ -141,6 +141,18 @@ body {
   background: var(--lg-color-neutral-50);
 }
 
+.marketing-links .nav-back {
+  color: var(--ink-on-dark);
+  border: 1px solid color-mix(in srgb, var(--lg-color-neutral-50) 24%, transparent);
+  padding: 8px 12px;
+  border-radius: 999px;
+}
+
+.marketing-links .nav-back:hover {
+  color: var(--ink-on-dark);
+  border-color: color-mix(in srgb, var(--lg-color-neutral-50) 42%, transparent);
+}
+
 .marketing-hero {
   width: min(1120px, calc(100vw - 48px));
   margin: 0 auto;
@@ -331,6 +343,7 @@ body {
   .device-stack { height: 360px; }
   .device-phone { width: 144px; right: 14px; }
   .marketing-links a { display: none; }
+  .marketing-links .nav-back { display: inline-flex; }
   .marketing-links .nav-cta { display: inline-flex; }
 }
 

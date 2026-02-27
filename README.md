@@ -182,6 +182,7 @@ App portal subpath build (`https://app.misonote.com/paste`):
 ```bash
 # apps/web subpath config
 PASTE_SITE_URL=https://app.misonote.com/paste
+VITE_PORTAL_HOME_URL=/
 VITE_BASE_PATH=/paste/
 VITE_API_BASE=/paste/v1
 VITE_SSO_REDIRECT_PATH=/paste/auth/callback
