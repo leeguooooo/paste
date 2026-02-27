@@ -173,7 +173,7 @@ Web app env (optional, recommended to set explicitly):
 VITE_SSO_ISSUER=https://account.misonote.com
 VITE_SSO_CLIENT_ID=misonote-paste-web
 # Fixed callback allowlist path used by web:
-# https://paste-web.misonote.com/auth/callback
+# https://app.misonote.com/paste/auth/callback
 # https://paste.misonote.com/auth/callback
 ```
 
@@ -181,6 +181,7 @@ App portal subpath build (`https://app.misonote.com/paste`):
 
 ```bash
 # apps/web subpath config
+PASTE_SITE_URL=https://app.misonote.com/paste
 VITE_BASE_PATH=/paste/
 VITE_API_BASE=/paste/v1
 VITE_SSO_REDIRECT_PATH=/paste/auth/callback
@@ -221,7 +222,7 @@ By default `API Base` is empty, so the app is **local-only**.
 
 To enable sync, set `API Base` to one of:
 
-- `https://paste-web.misonote.com/v1` (same-domain proxy route)
+- `https://app.misonote.com/paste/v1` (portal proxy route)
 - `https://pasteapi.misonote.com/v1` (direct Worker domain)
 
 Then keep `User ID` consistent across devices.

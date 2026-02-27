@@ -824,7 +824,7 @@ export default function App() {
                   <span className="dot dot-red" />
                   <span className="dot dot-yellow" />
                   <span className="dot dot-green" />
-                  <span className="device-browser-title">pastyx-web.misonote.com</span>
+                  <span className="device-browser-title">app.misonote.com/paste</span>
                 </div>
                 <img
                   src={resolveAssetPath("product/shots/web-live-1920x1080.png")}

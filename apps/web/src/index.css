@@ -68,7 +68,7 @@ body {
   padding: 22px 0 40px;
 }
 
-/* Marketing header + hero (paste-web.misonote.com as "official site") */
+/* Marketing header + hero */
 .marketing-nav {
   width: min(1120px, calc(100vw - 48px));
   margin: 0 auto;
