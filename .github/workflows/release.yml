@@ -30,6 +30,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm run typecheck
       - run: npm --workspace @paste/macos run dist -- --mac dmg zip --${{ matrix.arch }}
+      - run: node apps/macos/electron/prepare-release-assets.cjs apps/macos/dist-electron
       - name: Normalize macOS update metadata filenames
         shell: bash
         run: |
@@ -71,6 +72,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm run typecheck
       - run: npm --workspace @paste/macos run dist -- --win nsis zip --x64
+      - run: node apps/macos/electron/prepare-release-assets.cjs apps/macos/dist-electron
       - uses: actions/upload-artifact@v6
         with:
           name: windows-x64

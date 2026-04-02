@@ -200,9 +200,10 @@ const {
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const { execFile, execFileSync } = require("node:child_process");
+const { execFile, execFileSync, spawnSync } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
 const { localFilterAndProjectClips, MAX_LOCAL_LIST_LIMIT } = require("./clip-list.cjs");
+const { getAutoUpdateSupport } = require("./auto-update.cjs");
 
 const isDev = !app.isPackaged;
 const parsePort = (raw, fallback) => {
@@ -371,6 +372,7 @@ const waitForFrontmostNonSelfAppAsync = async ({ timeoutMs = 1500 } = {}) => {
 };
 
 const updateState = {
+  supported: true,
   checking: false,
   available: false,
   downloaded: false,
@@ -380,6 +382,18 @@ const updateState = {
 };
 
 let updateSignatureErrorPrompted = false;
+
+const inspectMacCodeSignOutput = () => {
+  if (process.platform !== "darwin") return "";
+  try {
+    const result = spawnSync("codesign", ["-dv", "--verbose=4", process.execPath], {
+      encoding: "utf8"
+    });
+    return [result.stdout, result.stderr].filter(Boolean).join("\n");
+  } catch {
+    return "";
+  }
+};
 
 const normalizeUpdateError = (errorLike) => {
   const raw =
@@ -1688,14 +1702,34 @@ const buildTrayTemplate = () => {
 
   const updateLabel = updateState.checking
     ? "Checking for Updates..."
-    : updateState.downloaded
-      ? "Restart and Install Update"
-      : "Check for Updates...";
+    : !updateState.supported
+      ? "Auto-update unavailable"
+      : updateState.downloaded
+        ? "Restart and Install Update"
+        : "Check for Updates...";
 
-  const updateEnabled = !isDev && (!updateState.checking);
+  const updateEnabled = !isDev && updateState.supported && (!updateState.checking);
 
   const updateClick = async () => {
     if (isDev) {
+      return;
+    }
+    if (!updateState.supported) {
+      try {
+        const res = await dialog.showMessageBox(mainWindow || undefined, {
+          type: "warning",
+          message: "Auto-update unavailable",
+          detail: updateState.error || "Please update manually from GitHub Releases.",
+          buttons: ["OK", "Open Releases Page"],
+          defaultId: 1,
+          cancelId: 0
+        });
+        if (res.response === 1) {
+          await shell.openExternal(RELEASES_LATEST_URL);
+        }
+      } catch {
+        // ignore
+      }
       return;
     }
     if (updateState.downloaded) {
@@ -1961,6 +1995,24 @@ const createTray = () => {
 const setupAutoUpdate = () => {
   if (isDev) return;
 
+  const support = getAutoUpdateSupport({
+    platform: process.platform,
+    isDev,
+    codeSignOutput: inspectMacCodeSignOutput()
+  });
+  if (!support.supported) {
+    setUpdateState({
+      supported: false,
+      checking: false,
+      available: false,
+      downloaded: false,
+      progressPercent: null,
+      version: null,
+      error: support.reason
+    });
+    return;
+  }
+
   // Keep behavior conservative: download automatically, but only install on explicit restart
   // (or when quitting the app).
   autoUpdater.autoDownload = true;
@@ -1968,6 +2020,7 @@ const setupAutoUpdate = () => {
 
   autoUpdater.on("checking-for-update", () => {
     setUpdateState({
+      supported: true,
       checking: true,
       available: false,
       downloaded: false,
@@ -1979,6 +2032,7 @@ const setupAutoUpdate = () => {
 
   autoUpdater.on("update-available", (info) => {
     setUpdateState({
+      supported: true,
       checking: false,
       available: true,
       downloaded: false,
@@ -1990,6 +2044,7 @@ const setupAutoUpdate = () => {
 
   autoUpdater.on("update-not-available", () => {
     setUpdateState({
+      supported: true,
       checking: false,
       available: false,
       downloaded: false,
@@ -2002,6 +2057,7 @@ const setupAutoUpdate = () => {
   autoUpdater.on("download-progress", (progress) => {
     const pct = typeof progress?.percent === "number" ? progress.percent : null;
     setUpdateState({
+      supported: true,
       checking: false,
       available: true,
       downloaded: false,
@@ -2012,6 +2068,7 @@ const setupAutoUpdate = () => {
 
   autoUpdater.on("update-downloaded", (info) => {
     setUpdateState({
+      supported: true,
       checking: false,
       available: true,
       downloaded: true,
@@ -2044,6 +2101,7 @@ const setupAutoUpdate = () => {
   autoUpdater.on("error", (error) => {
     const normalized = normalizeUpdateError(error);
     setUpdateState({
+      supported: true,
       checking: false,
       error: normalized.userMessage
     });
