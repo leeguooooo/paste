@@ -202,6 +202,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
+const { localFilterAndProjectClips, MAX_LOCAL_LIST_LIMIT } = require("./clip-list.cjs");
 
 const isDev = !app.isPackaged;
 const parsePort = (raw, fallback) => {
@@ -230,6 +231,8 @@ const iCloudClipsFile = path.join(iCloudAppDir, "pastyx-local-clips.json");
 const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
 // Aim for a small inline preview to keep list payloads cheap.
 const MAX_IMAGE_PREVIEW_DATA_URL_LENGTH = 250_000;
+// Poll fast enough to keep hotkey-open list feeling up-to-date, without busy looping.
+const CLIPBOARD_WATCH_INTERVAL_MS = 700;
 
 let mainWindow = null;
 let tray = null;
@@ -769,27 +772,13 @@ const localListClips = (cfg, query = {}) => {
   if (isICloudSyncEnabled(cfg)) {
     runICloudSyncIfNeeded(cfg);
   }
-  const q = (query.q || "").toString().trim().toLowerCase();
-  const favoriteOnly = Boolean(query.favorite);
-
-  // Cleanup happens at startup and on writes. Avoid sorting/filtering + fs writes on
-  // every list call (this is hit frequently while the window is visible).
   const db = readLocalDb();
-  let items = Array.isArray(db?.clips) ? db.clips : [];
-  if (favoriteOnly) items = items.filter((c) => c?.isFavorite);
+  const items = Array.isArray(db?.clips) ? db.clips : [];
+  const lite = query?.lite !== false;
 
-  if (q) {
-    items = items.filter((c) => {
-      const summary = (c?.summary || "").toString().toLowerCase();
-      const content = (c?.content || "").toString().toLowerCase();
-      const sourceUrl = (c?.sourceUrl || "").toString().toLowerCase();
-      const html = (c?.contentHtml || "").toString().toLowerCase();
-      return summary.includes(q) || content.includes(q) || sourceUrl.includes(q) || html.includes(q);
-    });
-  }
-
-  const limit = 60;
-  return localOk({ items: items.slice(0, limit), nextCursor: null, hasMore: items.length > limit });
+  // Keep read-path work bounded. The renderer only shows the recent window, so
+  // stop after enough matches instead of scanning and serializing the full DB.
+  return localOk(localFilterAndProjectClips(items, query, { lite, limit: MAX_LOCAL_LIST_LIMIT }));
 };
 
 const localCreateClip = (cfg, payload) => {
@@ -1664,6 +1653,8 @@ const toggleMainWindow = async () => {
     return { visible: false };
   }
 
+  // Trigger an immediate capture on open so users don't wait for the next watcher tick.
+  void captureClipboardNow("hotkey");
   fitMainWindowToDisplay();
   suppressBlurHideUntil = Date.now() + 900;
   try {
@@ -2146,7 +2137,7 @@ const startClipboardWatcher = () => {
     }
 
     await captureClipboardNow("watcher");
-  }, 1200);
+  }, CLIPBOARD_WATCH_INTERVAL_MS);
 };
 
 const startICloudSyncWatcher = () => {
@@ -2399,6 +2390,7 @@ const setupIpc = () => {
 
   ipcMain.handle("clips:list", async (_, query = {}) => {
     const cfg = readConfig();
+    const lite = query?.lite !== false;
     if (!isRemoteEnabled(cfg)) {
       return localListClips(cfg, query);
     }
@@ -2406,8 +2398,8 @@ const setupIpc = () => {
     const params = new URLSearchParams();
     if (query.q) params.set("q", query.q);
     if (query.favorite) params.set("favorite", "1");
-    params.set("limit", "60");
-    params.set("lite", "1");
+    params.set("limit", String(MAX_LOCAL_LIST_LIMIT));
+    if (lite) params.set("lite", "1");
     const remoteRes = await remoteRequest(cfg, `/clips?${params.toString()}`);
     if (remoteRes?.ok) {
       return remoteRes;

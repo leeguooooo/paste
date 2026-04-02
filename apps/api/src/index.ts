@@ -6,6 +6,11 @@ interface Env {
   DB?: D1Database;
   CACHE?: KVNamespace;
   IMAGES?: R2Bucket;
+  AUTH_MODE?: string;
+  SSO_ISSUER?: string;
+  SSO_CLIENT_ID?: string;
+  SSO_ENTITLEMENT_TENANT_ID?: string;
+  SSO_REQUIRED_ENTITLEMENT_KEY?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   AUTH_SECRET?: string;
@@ -88,6 +93,13 @@ type AuthSession = {
   gid: number;
   iat: number;
   exp: number;
+};
+
+type SsoUserInfo = {
+  sub: string;
+  tid?: string;
+  gaid?: string;
+  email?: string;
 };
 
 type GithubUser = {
@@ -211,6 +223,66 @@ const redirectWithCookies = (location: string, cookies: string[] = []): Response
 
 const allowHeaderIdentity = (env: Env): boolean => env.ALLOW_HEADER_IDENTITY !== "0";
 
+type AuthMode = "legacy" | "hybrid" | "sso";
+
+const resolveAuthMode = (env: Env): AuthMode => {
+  const mode = String(env.AUTH_MODE ?? "legacy").trim().toLowerCase();
+  if (mode === "hybrid" || mode === "sso") return mode;
+  return "legacy";
+};
+
+const readBearerToken = (request: Request): string | null => {
+  const raw = request.headers.get("authorization")?.trim() ?? "";
+  if (!/^bearer\s+/i.test(raw)) return null;
+  const token = raw.replace(/^bearer\s+/i, "").trim();
+  return token || null;
+};
+
+const isJwtLike = (token: string): boolean => {
+  const parts = token.split(".");
+  return parts.length === 3 && parts.every((part) => part.length > 0);
+};
+
+type SsoIdentityResult =
+  | { status: "ok"; identity: Identity; user: SsoUserInfo }
+  | { status: "unavailable" }
+  | { status: "invalid" };
+
+const readSsoIdentity = async (request: Request, env: Env): Promise<SsoIdentityResult> => {
+  const issuer = String(env.SSO_ISSUER ?? "").trim().replace(/\/+$/, "");
+  if (!issuer) return { status: "unavailable" };
+  const token = readBearerToken(request);
+  if (!token || !isJwtLike(token)) return { status: "unavailable" };
+
+  const headerDeviceId = request.headers.get("x-device-id")?.trim() ?? "";
+  const response = await fetch(`${issuer}/userinfo`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/json"
+    }
+  }).catch(() => null);
+
+  if (!response?.ok) return { status: "invalid" };
+
+  const payload = (await response.json().catch(() => null)) as Partial<SsoUserInfo> | null;
+  const sub = typeof payload?.sub === "string" ? payload.sub.trim() : "";
+  if (!sub) return { status: "invalid" };
+
+  return {
+    status: "ok",
+    identity: {
+      userId: sub,
+      deviceId: headerDeviceId || "web_browser"
+    },
+    user: {
+      sub,
+      tid: typeof payload?.tid === "string" ? payload.tid : undefined,
+      gaid: typeof payload?.gaid === "string" ? payload.gaid : undefined,
+      email: typeof payload?.email === "string" ? payload.email : undefined
+    }
+  };
+};
+
 const hmacSign = async (secret: string, message: string): Promise<string> => {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -311,8 +383,20 @@ const getDbOrError = (env: Env): D1Database | Response => {
 };
 
 const getIdentity = async (request: Request, env: Env): Promise<Identity | Response> => {
-  const session = (await readSession(request, env)) ?? (await readBearerSession(request, env));
+  const authMode = resolveAuthMode(env);
   const headerDeviceId = request.headers.get("x-device-id")?.trim() ?? "";
+
+  if (authMode !== "legacy") {
+    const sso = await readSsoIdentity(request, env);
+    if (sso.status === "ok") {
+      return sso.identity;
+    }
+    if (authMode === "sso") {
+      return fail("AUTH_REQUIRED", "SSO sign-in is required.", 401);
+    }
+  }
+
+  const session = (await readSession(request, env)) ?? (await readBearerSession(request, env));
   if (session) {
     return { userId: session.sub, deviceId: headerDeviceId || "web_browser" };
   }
@@ -326,7 +410,7 @@ const getIdentity = async (request: Request, env: Env): Promise<Identity | Respo
   if (!userId || !deviceId) {
     return fail(
       "IDENTITY_REQUIRED",
-      "Sign in with GitHub or provide headers x-user-id and x-device-id.",
+      "Sign in with SSO or provide headers x-user-id and x-device-id.",
       400
     );
   }
@@ -1683,10 +1767,25 @@ const getGithubRedirectUri = (request: Request, env: Env): string => {
   return `${url.origin}/v1/auth/github/callback`;
 };
 
+const getSsoIssuer = (env: Env): string => String(env.SSO_ISSUER ?? "").trim().replace(/\/+$/, "");
+
+const getSsoClientId = (env: Env): string => String(env.SSO_CLIENT_ID ?? "misonote-paste-web").trim() || "misonote-paste-web";
+
+const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value.trim());
+
 const hasGithubAuthConfig = (env: Env): boolean =>
   Boolean(env.GITHUB_CLIENT_ID?.trim() && env.GITHUB_CLIENT_SECRET?.trim() && env.AUTH_SECRET?.trim());
 
+const ensureGithubAuthEnabled = (env: Env): Response | null => {
+  if (resolveAuthMode(env) === "legacy") {
+    return null;
+  }
+  return fail("AUTH_METHOD_DISABLED", "GitHub auth is disabled. Use Cloudflare SSO.", 404);
+};
+
 const handleAuthGithubStart = async (request: Request, env: Env): Promise<Response> => {
+  const disabled = ensureGithubAuthEnabled(env);
+  if (disabled) return disabled;
   if (!hasGithubAuthConfig(env)) {
     return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
   }
@@ -1715,6 +1814,8 @@ const handleAuthGithubStart = async (request: Request, env: Env): Promise<Respon
 };
 
 const handleAuthGithubCallback = async (request: Request, env: Env): Promise<Response> => {
+  const disabled = ensureGithubAuthEnabled(env);
+  if (disabled) return disabled;
   if (!hasGithubAuthConfig(env)) {
     return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
   }
@@ -1808,6 +1909,8 @@ const handleAuthGithubCallback = async (request: Request, env: Env): Promise<Res
 };
 
 const handleAuthGithubDeviceStart = async (env: Env): Promise<Response> => {
+  const disabled = ensureGithubAuthEnabled(env);
+  if (disabled) return disabled;
   if (!hasGithubAuthConfig(env)) {
     return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
   }
@@ -1854,6 +1957,8 @@ const handleAuthGithubDeviceStart = async (env: Env): Promise<Response> => {
 };
 
 const handleAuthGithubDevicePoll = async (request: Request, env: Env): Promise<Response> => {
+  const disabled = ensureGithubAuthEnabled(env);
+  if (disabled) return disabled;
   if (!hasGithubAuthConfig(env)) {
     return fail("AUTH_CONFIG_MISSING", "GitHub auth is not configured.", 500);
   }
@@ -1950,7 +2055,123 @@ const handleAuthGithubDevicePoll = async (request: Request, env: Env): Promise<R
   });
 };
 
+const handleAuthSsoToken = async (request: Request, env: Env): Promise<Response> => {
+  const issuer = getSsoIssuer(env);
+  if (!issuer) {
+    return fail("SSO_CONFIG_MISSING", "SSO issuer is not configured.", 500);
+  }
+
+  const parsed = await parseJson<{
+    grantType?: "authorization_code" | "refresh_token";
+    code?: string;
+    codeVerifier?: string;
+    redirectUri?: string;
+    refreshToken?: string;
+  }>(request);
+  if (parsed instanceof Response) {
+    return parsed;
+  }
+
+  const grantType = parsed.grantType ?? "authorization_code";
+  if (grantType !== "authorization_code" && grantType !== "refresh_token") {
+    return fail("INVALID_GRANT_TYPE", "grantType must be authorization_code or refresh_token", 400);
+  }
+
+  const form = new URLSearchParams();
+  form.set("grant_type", grantType);
+  form.set("client_id", getSsoClientId(env));
+
+  if (grantType === "authorization_code") {
+    const code = String(parsed.code ?? "").trim();
+    const codeVerifier = String(parsed.codeVerifier ?? "").trim();
+    const redirectUri = String(parsed.redirectUri ?? "").trim();
+    if (!code || !codeVerifier || !redirectUri) {
+      return fail("INVALID_SSO_CODE_EXCHANGE", "code, codeVerifier, redirectUri are required", 400);
+    }
+    if (!isHttpUrl(redirectUri)) {
+      return fail("INVALID_REDIRECT_URI", "redirectUri must be http(s)", 400);
+    }
+    form.set("code", code);
+    form.set("code_verifier", codeVerifier);
+    form.set("redirect_uri", redirectUri);
+  } else {
+    const refreshToken = String(parsed.refreshToken ?? "").trim();
+    if (!refreshToken) {
+      return fail("INVALID_REFRESH_TOKEN", "refreshToken is required", 400);
+    }
+    form.set("refresh_token", refreshToken);
+  }
+
+  const response = await fetch(`${issuer}/token`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body: form.toString()
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    token_type?: string;
+    scope?: string;
+    error_description?: string;
+    statusMessage?: string;
+  };
+  if (!response.ok) {
+    return fail(
+      "SSO_TOKEN_EXCHANGE_FAILED",
+      payload.statusMessage?.trim() || payload.error_description?.trim() || `sso token exchange failed (${response.status})`,
+      response.status >= 400 && response.status < 600 ? response.status : 502
+    );
+  }
+
+  const accessToken = String(payload.access_token ?? "").trim();
+  if (!accessToken) {
+    return fail("SSO_TOKEN_MISSING", "sso access token missing", 502);
+  }
+
+  return ok({
+    tokenType: payload.token_type || "Bearer",
+    accessToken,
+    refreshToken: String(payload.refresh_token ?? "").trim() || null,
+    expiresIn: Number.isFinite(Number(payload.expires_in)) ? Number(payload.expires_in) : 300,
+    scope: payload.scope || null
+  });
+};
+
 const handleAuthMe = async (request: Request, env: Env): Promise<Response> => {
+  const authMode = resolveAuthMode(env);
+  if (authMode !== "legacy") {
+    const sso = await readSsoIdentity(request, env);
+    if (sso.status === "ok") {
+      return ok({
+        authenticated: true,
+        user: {
+          userId: sso.user.sub,
+          githubLogin: sso.user.gaid ?? sso.user.sub,
+          githubId: 0
+        },
+        headerIdentityEnabled: authMode !== "sso" && allowHeaderIdentity(env),
+        authConfigured: true,
+        authMode,
+        authSource: "sso"
+      });
+    }
+    if (authMode === "sso") {
+      return ok({
+        authenticated: false,
+        user: null,
+        headerIdentityEnabled: false,
+        authConfigured: true,
+        authMode,
+        authSource: null
+      });
+    }
+  }
+
   const session = (await readSession(request, env)) ?? (await readBearerSession(request, env));
   return ok({
     authenticated: Boolean(session),
@@ -1962,7 +2183,9 @@ const handleAuthMe = async (request: Request, env: Env): Promise<Response> => {
         }
       : null,
     headerIdentityEnabled: allowHeaderIdentity(env),
-    authConfigured: hasGithubAuthConfig(env)
+    authConfigured: hasGithubAuthConfig(env),
+    authMode,
+    authSource: session ? "legacy" : null
   });
 };
 
@@ -2044,6 +2267,10 @@ export default {
 
       if (request.method === "POST" && path === "/v1/auth/github/device/poll") {
         return handleAuthGithubDevicePoll(request, env);
+      }
+
+      if (request.method === "POST" && path === "/v1/auth/sso/token") {
+        return handleAuthSsoToken(request, env);
       }
 
       if (request.method === "POST" && path === "/v1/auth/logout") {

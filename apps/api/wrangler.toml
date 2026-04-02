@@ -12,6 +12,11 @@ routes = [
 [vars]
 APP_NAME = "paste"
 API_VERSION = "v1"
+AUTH_MODE = "sso"
+SSO_ISSUER = "https://cloudflare-sso.pages.dev"
+SSO_CLIENT_ID = "misonote-paste-web"
+SSO_ENTITLEMENT_TENANT_ID = "tenant-misonote"
+SSO_REQUIRED_ENTITLEMENT_KEY = "membership.all_apps"
 ALLOW_HEADER_IDENTITY = "0"
 
 [[d1_databases]]

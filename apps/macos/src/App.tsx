@@ -12,7 +12,6 @@ import {
   Code,
   ArrowRight,
   Copy,
-  ExternalLink,
   Globe,
   Cpu,
   Monitor,
@@ -41,15 +40,6 @@ type AuthStatus = {
   user: { userId: string; githubLogin: string; githubId?: number } | null;
 };
 
-type DeviceAuthSession = {
-  deviceCode: string;
-  userCode: string;
-  verificationUri: string;
-  verificationUriComplete?: string | null;
-  retryAfterSec: number;
-  startedAt: number;
-};
-
 type ICloudSyncStatus = {
   enabled: boolean;
   available: boolean;
@@ -70,6 +60,8 @@ type LocalSyncProgress = {
 };
 
 type SettingsTab = "sync" | "account" | "system";
+
+const SETTINGS_BACKDROP_CAPTURE_LIMIT = 24;
 
 const emptyConfig: AppConfig = {
   apiBase: "",
@@ -390,7 +382,6 @@ export default function App() {
   const [localSyncPendingCount, setLocalSyncPendingCount] = useState(0);
   const [localSyncLoading, setLocalSyncLoading] = useState(false);
   const [localSyncProgress, setLocalSyncProgress] = useState<LocalSyncProgress | null>(null);
-  const [deviceAuthSession, setDeviceAuthSession] = useState<DeviceAuthSession | null>(null);
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -407,7 +398,6 @@ export default function App() {
   const selectionReasonRef = useRef<"keyboard" | "hover" | "click" | "other">("other");
   const hoverRafRef = useRef<number | null>(null);
   const hoverPendingIndexRef = useRef<number | null>(null);
-  const authPollTimerRef = useRef<number | null>(null);
   // Keep hotkey handlers in sync with latest state and avoid stale closure races.
   const selectedIndexRef = useRef(selectedIndex);
   selectedIndexRef.current = selectedIndex;
@@ -482,7 +472,11 @@ export default function App() {
   const loadClips = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
-      const res = await window.macos.listClips({ q: query || undefined, favorite: favoriteOnly || undefined });
+      const res = await window.macos.listClips({
+        q: query || undefined,
+        favorite: favoriteOnly || undefined,
+        lite: true
+      });
       if (res?.ok) {
         const nextItems = dedupeRecentItems(collapseConsecutiveDuplicates(res.data.items ?? []));
         setClips(nextItems);
@@ -493,13 +487,6 @@ export default function App() {
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [query, favoriteOnly]);
-
-  const clearAuthPollTimer = useCallback(() => {
-    if (authPollTimerRef.current) {
-      window.clearTimeout(authPollTimerRef.current);
-      authPollTimerRef.current = null;
-    }
-  }, []);
 
   const loadAuthStatus = useCallback(async () => {
     try {
@@ -547,50 +534,9 @@ export default function App() {
     }
   }, []);
 
-  const pollDeviceAuth = useCallback(async (deviceCode: string) => {
-    const code = String(deviceCode || "").trim();
-    if (!code) return;
-    try {
-      const res = await window.macos.pollGithubDeviceAuth(code);
-      if (res?.ok && res?.data?.status === "pending") {
-        const nextSec = Number(res?.data?.retryAfterSec || 5);
-        setAuthMessage("Waiting for GitHub authorization...");
-        authPollTimerRef.current = window.setTimeout(() => {
-          void pollDeviceAuth(code);
-        }, Math.max(2, nextSec) * 1000);
-        return;
-      }
-      if (res?.ok && res?.data?.status === "approved") {
-        clearAuthPollTimer();
-        setDeviceAuthSession(null);
-        setAuthMessage("Signed in with GitHub.");
-        await loadConfig();
-        await loadAuthStatus();
-        await loadLocalSyncStatus();
-        void loadClips(true);
-        return;
-      }
-      if (res?.ok && res?.data?.status === "denied") {
-        clearAuthPollTimer();
-        setDeviceAuthSession(null);
-        setAuthMessage(String(res?.data?.message || "Authorization denied."));
-        await loadAuthStatus();
-        return;
-      }
-      clearAuthPollTimer();
-      setDeviceAuthSession(null);
-      setAuthMessage(String(res?.message || "GitHub auth failed."));
-    } catch (e) {
-      clearAuthPollTimer();
-      setDeviceAuthSession(null);
-      setAuthMessage(e instanceof Error ? e.message : "GitHub auth failed.");
-    }
-  }, [clearAuthPollTimer, loadAuthStatus, loadClips, loadLocalSyncStatus]);
-
-  const startGithubAuth = useCallback(async () => {
+  const startSsoAuth = useCallback(async () => {
     setAuthLoading(true);
     setAuthMessage("");
-    clearAuthPollTimer();
     try {
       const draftApiBase = String(config.apiBase || "").trim();
       if (!/^https?:\/\//i.test(draftApiBase)) {
@@ -616,61 +562,45 @@ export default function App() {
       await loadAuthStatus();
       await loadICloudSyncStatus();
 
-      const res = await window.macos.startGithubDeviceAuth();
+      const res = await window.macos.startSsoAuth();
       if (!res?.ok) {
-        setAuthMessage(String(res?.message || "Failed to start GitHub auth."));
+        setAuthMessage(String(res?.message || "Failed to start SSO auth."));
         return;
       }
-      const data = res?.data || {};
-      const deviceCode = String(data.deviceCode || "").trim();
-      const userCode = String(data.userCode || "").trim();
-      const verificationUri = String(data.verificationUri || "").trim();
-      const verificationUriComplete = data.verificationUriComplete ? String(data.verificationUriComplete) : null;
-      if (!deviceCode || !userCode || !verificationUri) {
-        setAuthMessage("GitHub auth payload is invalid.");
-        return;
+      if (res?.data?.status === "approved") {
+        setAuthMessage("Signed in with Cloudflare SSO.");
+      } else {
+        setAuthMessage("SSO sign-in finished.");
       }
-
-      const retryAfterSec = Math.max(2, Number(data.interval || 5));
-      setDeviceAuthSession({
-        deviceCode,
-        userCode,
-        verificationUri,
-        verificationUriComplete,
-        retryAfterSec,
-        startedAt: Date.now()
-      });
-      setAuthMessage("Browser opened. If not, click Open GitHub below.");
-      authPollTimerRef.current = window.setTimeout(() => {
-        void pollDeviceAuth(deviceCode);
-      }, retryAfterSec * 1000);
+      await loadConfig();
+      await loadAuthStatus();
+      await loadLocalSyncStatus();
+      void loadClips(true);
     } catch (e) {
-      setAuthMessage(e instanceof Error ? e.message : "Failed to start GitHub auth.");
+      setAuthMessage(e instanceof Error ? e.message : "Failed to start SSO auth.");
     } finally {
       setAuthLoading(false);
     }
   }, [
     authStatus.authenticated,
     authStatus.user,
-    clearAuthPollTimer,
     config,
     loadAuthStatus,
+    loadClips,
     loadICloudSyncStatus,
-    pollDeviceAuth,
+    loadLocalSyncStatus,
     toConfigPayload
   ]);
 
-  const logoutGithubAuth = useCallback(async () => {
+  const logoutAuth = useCallback(async () => {
     setAuthLoading(true);
     setAuthMessage("");
-    clearAuthPollTimer();
     try {
       const res = await window.macos.logoutAuth();
       if (!res?.ok) {
         setAuthMessage(String(res?.message || "Sign out failed."));
         return;
       }
-      setDeviceAuthSession(null);
       setAuthMessage("Signed out.");
       setLocalSyncPendingCount(0);
       setLocalSyncProgress(null);
@@ -683,7 +613,7 @@ export default function App() {
     } finally {
       setAuthLoading(false);
     }
-  }, [clearAuthPollTimer, loadAuthStatus, loadClips, loadICloudSyncStatus]);
+  }, [loadAuthStatus, loadClips, loadICloudSyncStatus]);
 
   const syncLocalHistoryNow = useCallback(async () => {
     setLocalSyncLoading(true);
@@ -818,21 +748,6 @@ export default function App() {
     }
   }, []);
 
-  const openGithubVerificationPage = useCallback(async () => {
-    const url = String(
-      deviceAuthSession?.verificationUriComplete || deviceAuthSession?.verificationUri || ""
-    ).trim();
-    if (!url) return;
-    try {
-      const res = await window.macos.openExternal(url);
-      if (!res?.ok) {
-        setAuthMessage(String(res?.message || "Failed to open GitHub page."));
-      }
-    } catch (e) {
-      setAuthMessage(e instanceof Error ? e.message : "Failed to open GitHub page.");
-    }
-  }, [deviceAuthSession]);
-
   useEffect(() => {
     void loadConfig();
     void loadAuthStatus();
@@ -880,10 +795,6 @@ export default function App() {
       }
     };
   }, []);
-
-  useEffect(() => () => {
-    clearAuthPollTimer();
-  }, [clearAuthPollTimer]);
 
   useEffect(() => {
     const off = window.macos.onOpenSettings?.(() => {
@@ -953,6 +864,11 @@ export default function App() {
     if (showSettings) return;
     setSettingsTab("sync");
     setSettingsBackdropDataUrl(null);
+
+    if (clipsRef.current.length > SETTINGS_BACKDROP_CAPTURE_LIMIT) {
+      setShowSettings(true);
+      return;
+    }
 
     try {
       const res = await window.macos.captureWindow();
@@ -1069,6 +985,16 @@ export default function App() {
       !isValidImageDataUrl(clip.imageDataUrl) &&
       !(typeof clip.imageUrl === "string" && clip.imageUrl.trim())
     ) {
+      try {
+        const res = await window.macos.getClip(clip.id);
+        if (res?.ok && res.data) {
+          effective = res.data;
+          setClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, ...res.data } : c)));
+        }
+      } catch {
+        // ignore
+      }
+    } else if ((clip.type === "html" || clip.type === "link") && clip.contentHtml == null) {
       try {
         const res = await window.macos.getClip(clip.id);
         if (res?.ok && res.data) {
@@ -1510,7 +1436,7 @@ export default function App() {
                       ) : null}
                       {config.icloudSync ? (
                         <div className="auth-device-hint">
-                          Works in both modes: local-only and API + GitHub login.
+                          Works in both modes: local-only and API + Cloudflare SSO login.
                         </div>
                       ) : null}
                       <div className="auth-device-hint">
@@ -1532,14 +1458,14 @@ export default function App() {
                       ) : null}
                     </div>
                     <div className="settings-row">
-                      <label>GitHub Auth</label>
+                      <label>Cloudflare SSO</label>
                       {authStatus.authenticated && authStatus.user ? (
                         <div className="inline-field-actions">
-                          <span className="status-badge">@{authStatus.user.githubLogin}</span>
+                          <span className="status-badge">{authStatus.user.githubLogin || authStatus.user.userId}</span>
                           <button
                             className="btn-cancel"
                             type="button"
-                            onClick={() => void logoutGithubAuth()}
+                            onClick={() => void logoutAuth()}
                             disabled={authLoading}
                           >
                             {authLoading ? "..." : "Sign out"}
@@ -1549,40 +1475,15 @@ export default function App() {
                         <button
                           className="btn-save"
                           type="button"
-                          onClick={() => void startGithubAuth()}
+                          onClick={() => void startSsoAuth()}
                           disabled={authLoading || !/^https?:\/\//i.test(String(config.apiBase || "").trim())}
                         >
                           {!/^https?:\/\//i.test(String(config.apiBase || "").trim())
                             ? "Set API first"
-                            : (authLoading ? "Starting..." : "Sign in with GitHub")}
+                            : (authLoading ? "Starting..." : "Sign in with Cloudflare SSO")}
                         </button>
                       )}
                     </div>
-                    {deviceAuthSession && (
-                      <div className="auth-device-box">
-                        <div className="auth-device-title">Authorize this device</div>
-                        <div className="auth-device-code" title={deviceAuthSession.userCode}>
-                          {deviceAuthSession.userCode}
-                        </div>
-                        <div className="auth-device-actions">
-                          <button className="btn-save" type="button" onClick={() => void openGithubVerificationPage()}>
-                            <ExternalLink size={14} />
-                            Open GitHub
-                          </button>
-                          <button
-                            className="btn-cancel"
-                            type="button"
-                            onClick={() => void copyText(deviceAuthSession.userCode, "Code")}
-                          >
-                            <Copy size={14} />
-                            Copy code
-                          </button>
-                        </div>
-                        <div className="auth-device-hint">
-                          If GitHub page does not auto-open, use Open GitHub above.
-                        </div>
-                      </div>
-                    )}
                     {authMessage ? (
                       <div className="auth-message">{authMessage}</div>
                     ) : null}
@@ -1647,7 +1548,7 @@ export default function App() {
                     </div>
                     {!authStatus.authenticated ? (
                       <div className="auth-device-hint">
-                        Sign in with GitHub in Cloud & Sync to bind this device with your cloud account.
+                        Sign in with Cloudflare SSO in Cloud & Sync to bind this device with your cloud account.
                       </div>
                     ) : null}
                   </div>

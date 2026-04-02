@@ -65,8 +65,15 @@ declare global {
         code?: string;
         message?: string;
       }>;
-      startGithubDeviceAuth: () => Promise<any>;
-      pollGithubDeviceAuth: (deviceCode: string) => Promise<any>;
+      startSsoAuth: () => Promise<{
+        ok: boolean;
+        data?: {
+          status: "approved";
+          user: { userId: string; githubLogin: string };
+        };
+        code?: string;
+        message?: string;
+      }>;
       logoutAuth: () => Promise<any>;
       getLocalSyncStatus: () => Promise<{ ok: boolean; data?: { pendingCount: number }; message?: string }>;
       runLocalSync: () => Promise<{
@@ -75,7 +82,7 @@ declare global {
         message?: string;
       }>;
       dismissLocalSync: () => Promise<{ ok: boolean; data?: { skipped: boolean }; message?: string }>;
-      listClips: (query?: { q?: string; favorite?: boolean }) => Promise<any>;
+      listClips: (query?: { q?: string; favorite?: boolean; lite?: boolean }) => Promise<any>;
       getClip: (id: string) => Promise<any>;
       createClip: (payload: {
         content: string;
