@@ -202,8 +202,18 @@ const http = require("node:http");
 const path = require("node:path");
 const { execFile, execFileSync, spawnSync } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
-const { localFilterAndProjectClips, MAX_LOCAL_LIST_LIMIT } = require("./clip-list.cjs");
-const { getAutoUpdateSupport } = require("./auto-update.cjs");
+const { MAX_LOCAL_LIST_LIMIT } = require("./clip-list.cjs");
+const {
+  compactDbFileStreaming,
+  countPendingClipsInDbFile,
+  deleteClipFromDbFile,
+  findClipByIdInDbFile,
+  listClipsFromDbFile,
+  prependClipToDbFile,
+  updateClipInDbFile,
+  visitClipObjectsInFileAsync
+} = require("./local-history.cjs");
+const { getAutoUpdateSupport, normalizeUpdateError } = require("./auto-update.cjs");
 
 const isDev = !app.isPackaged;
 const parsePort = (raw, fallback) => {
@@ -232,6 +242,9 @@ const iCloudClipsFile = path.join(iCloudAppDir, "pastyx-local-clips.json");
 const MAX_IMAGE_DATA_URL_LENGTH = 1_500_000;
 // Aim for a small inline preview to keep list payloads cheap.
 const MAX_IMAGE_PREVIEW_DATA_URL_LENGTH = 250_000;
+// Full JSON sync needs both local and iCloud databases in memory. Above this,
+// streaming local history remains usable, but automatic full-file sync is unsafe.
+const MAX_FULL_DB_READ_BYTES = 75 * 1024 * 1024;
 // Poll fast enough to keep hotkey-open list feeling up-to-date, without busy looping.
 const CLIPBOARD_WATCH_INTERVAL_MS = 700;
 
@@ -239,6 +252,8 @@ let mainWindow = null;
 let tray = null;
 let clipboardTimer = null;
 let iCloudSyncTimer = null;
+let pendingICloudSyncTimer = null;
+let localDbMaintenanceTimer = null;
 let iCloudSyncState = {
   lastSyncAt: 0,
   lastResult: "idle", // idle | ok | error | skipped
@@ -393,28 +408,6 @@ const inspectMacCodeSignOutput = () => {
   } catch {
     return "";
   }
-};
-
-const normalizeUpdateError = (errorLike) => {
-  const raw =
-    errorLike instanceof Error
-      ? String(errorLike.message || "auto update error")
-      : String(errorLike || "auto update error");
-  const isSignatureValidationError =
-    /code signature/i.test(raw) && /did not pass validation/i.test(raw);
-  if (!isSignatureValidationError) {
-    return {
-      raw,
-      userMessage: raw,
-      isSignatureValidationError: false
-    };
-  }
-  return {
-    raw,
-    userMessage:
-      "Auto-update failed signature validation. This release build is not signed with a trusted Developer ID certificate. Please update from GitHub Releases for now.",
-    isSignatureValidationError: true
-  };
 };
 
 const maybePromptManualUpdateForSignatureError = async (detailRaw) => {
@@ -587,6 +580,14 @@ const ensureICloudAppDir = () => {
   return isICloudDriveAvailable();
 };
 
+const dbFileSize = (file) => {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+};
+
 const readDbFile = (file, createIfMissing = false) => {
   try {
     if (!fs.existsSync(file)) {
@@ -660,6 +661,14 @@ const syncLocalDbWithICloud = (cfg) => {
   if (!ensureICloudAppDir()) {
     return { ok: false, changed: false, reason: "icloud-unavailable" };
   }
+  if (dbFileSize(localClipsFile) > MAX_FULL_DB_READ_BYTES || dbFileSize(iCloudClipsFile) > MAX_FULL_DB_READ_BYTES) {
+    return {
+      ok: false,
+      changed: false,
+      reason: "history-too-large",
+      message: "Local history is too large for automatic iCloud sync. Recent local history remains available."
+    };
+  }
 
   const localDb = readDbFile(localClipsFile, true);
   const cloudDb = readDbFile(iCloudClipsFile, false);
@@ -701,6 +710,17 @@ const runICloudSyncIfNeeded = (cfg, { notify = false } = {}) => {
     broadcastToWindows("clips:changed", { source: "icloud", at: Date.now() });
   }
   return res;
+};
+
+const scheduleICloudSyncIfNeeded = (cfg, { delayMs = 1000, notify = true } = {}) => {
+  if (!isICloudSyncEnabled(cfg)) return;
+  if (pendingICloudSyncTimer) return;
+  const snapshot = normalizeConfig(cfg || readConfig());
+  pendingICloudSyncTimer = setTimeout(() => {
+    pendingICloudSyncTimer = null;
+    runICloudSyncIfNeeded(snapshot, { notify });
+  }, Math.max(250, Number(delayMs) || 1000));
+  pendingICloudSyncTimer.unref?.();
 };
 
 const retentionMsFromConfig = (cfg) => {
@@ -782,23 +802,40 @@ const cleanupLocalDb = (cfg, db) => {
   return { clips };
 };
 
+const compactLocalDbStreaming = (cfg) => {
+  const ms = retentionMsFromConfig(cfg);
+  const cutoff = ms === null ? null : Date.now() - ms;
+  return compactDbFileStreaming(localClipsFile, {
+    cutoff,
+    maxClips: 5000
+  });
+};
+
+const scheduleLocalDbMaintenance = (cfg, delayMs = 30_000) => {
+  if (localDbMaintenanceTimer) return;
+  const snapshot = normalizeConfig(cfg || readConfig());
+  localDbMaintenanceTimer = setTimeout(() => {
+    localDbMaintenanceTimer = null;
+    try {
+      compactLocalDbStreaming(snapshot);
+    } catch (error) {
+      console.warn("Local history maintenance failed:", error instanceof Error ? error.message : String(error));
+    }
+  }, Math.max(250, Number(delayMs) || 30_000));
+  localDbMaintenanceTimer.unref?.();
+};
+
 const localListClips = (cfg, query = {}) => {
-  if (isICloudSyncEnabled(cfg)) {
-    runICloudSyncIfNeeded(cfg);
-  }
-  const db = readLocalDb();
-  const items = Array.isArray(db?.clips) ? db.clips : [];
   const lite = query?.lite !== false;
 
-  // Keep read-path work bounded. The renderer only shows the recent window, so
-  // stop after enough matches instead of scanning and serializing the full DB.
-  return localOk(localFilterAndProjectClips(items, query, { lite, limit: MAX_LOCAL_LIST_LIMIT }));
+  return localOk(listClipsFromDbFile(localClipsFile, query, {
+    lite,
+    limit: MAX_LOCAL_LIST_LIMIT
+  }));
 };
 
 const localCreateClip = (cfg, payload) => {
   const now = Date.now();
-  const db = readLocalDb();
-  const clips = Array.isArray(db.clips) ? db.clips : [];
 
   const clip = {
     id: payload?.id || randomUUID(),
@@ -824,39 +861,54 @@ const localCreateClip = (cfg, payload) => {
     createdAt: now
   };
 
-  const cleaned = cleanupLocalDb(cfg, { clips: [clip, ...clips] });
-  writeLocalDb(cleaned);
-  if (isICloudSyncEnabled(cfg)) {
-    runICloudSyncIfNeeded(cfg);
+  try {
+    prependClipToDbFile(localClipsFile, clip);
+  } catch {
+    const db = readLocalDb();
+    const clips = Array.isArray(db.clips) ? db.clips : [];
+    const cleaned = cleanupLocalDb(cfg, { clips: [clip, ...clips] });
+    writeLocalDb(cleaned);
   }
+  scheduleLocalDbMaintenance(cfg);
+  scheduleICloudSyncIfNeeded(cfg);
   return localOk(clip);
 };
 
 const localToggleFavorite = (cfg, id, isFavorite) => {
-  const db = readLocalDb();
-  const clips = Array.isArray(db.clips) ? db.clips : [];
-  const next = clips.map((c) =>
-    c?.id === id
-      ? { ...c, isFavorite: Boolean(isFavorite), serverUpdatedAt: Date.now() }
-      : c
-  );
-  const cleaned = cleanupLocalDb(cfg, { clips: next });
-  writeLocalDb(cleaned);
-  if (isICloudSyncEnabled(cfg)) {
-    runICloudSyncIfNeeded(cfg);
+  try {
+    updateClipInDbFile(localClipsFile, id, (clip) => ({
+      ...clip,
+      isFavorite: Boolean(isFavorite),
+      serverUpdatedAt: Date.now()
+    }));
+  } catch {
+    const db = readLocalDb();
+    const clips = Array.isArray(db.clips) ? db.clips : [];
+    const next = clips.map((c) =>
+      c?.id === id
+        ? { ...c, isFavorite: Boolean(isFavorite), serverUpdatedAt: Date.now() }
+        : c
+    );
+    const cleaned = cleanupLocalDb(cfg, { clips: next });
+    writeLocalDb(cleaned);
   }
+  scheduleLocalDbMaintenance(cfg);
+  scheduleICloudSyncIfNeeded(cfg);
   return localOk({ ok: true });
 };
 
 const localDeleteClip = (cfg, id) => {
-  const db = readLocalDb();
-  const clips = Array.isArray(db.clips) ? db.clips : [];
-  const next = clips.filter((c) => c?.id !== id);
-  const cleaned = cleanupLocalDb(cfg, { clips: next });
-  writeLocalDb(cleaned);
-  if (isICloudSyncEnabled(cfg)) {
-    runICloudSyncIfNeeded(cfg);
+  try {
+    deleteClipFromDbFile(localClipsFile, id);
+  } catch {
+    const db = readLocalDb();
+    const clips = Array.isArray(db.clips) ? db.clips : [];
+    const next = clips.filter((c) => c?.id !== id);
+    const cleaned = cleanupLocalDb(cfg, { clips: next });
+    writeLocalDb(cleaned);
   }
+  scheduleLocalDbMaintenance(cfg);
+  scheduleICloudSyncIfNeeded(cfg);
   return localOk({ ok: true });
 };
 
@@ -883,20 +935,6 @@ const withLocalSyncDecision = (cfg, userId, decision) => {
       [uid]: decision
     }
   };
-};
-
-const listPendingLocalSyncClips = (cfg) => {
-  if (!isRemoteEnabled(cfg) || !isTokenAuthEnabled(cfg)) {
-    return [];
-  }
-  const userId = String(cfg?.userId || "").trim();
-  if (!userId) return [];
-  const decision = getLocalSyncDecision(cfg, userId);
-  if (decision) return [];
-
-  const db = readLocalDb();
-  const clips = Array.isArray(db?.clips) ? db.clips : [];
-  return clips.filter((c) => c && !c.isDeleted);
 };
 
 const isProbablyUrl = (value) => /^https?:\/\/\S+$/i.test((value || "").trim());
@@ -1747,7 +1785,11 @@ const buildTrayTemplate = () => {
     } catch (error) {
       const normalized = normalizeUpdateError(error);
       setUpdateState({
+        supported: !normalized.isSignatureValidationError,
         checking: false,
+        available: false,
+        downloaded: false,
+        progressPercent: null,
         error: normalized.userMessage
       });
       if (normalized.isSignatureValidationError) {
@@ -2101,8 +2143,11 @@ const setupAutoUpdate = () => {
   autoUpdater.on("error", (error) => {
     const normalized = normalizeUpdateError(error);
     setUpdateState({
-      supported: true,
+      supported: !normalized.isSignatureValidationError,
       checking: false,
+      available: false,
+      downloaded: false,
+      progressPercent: null,
       error: normalized.userMessage
     });
     if (normalized.isSignatureValidationError) {
@@ -2113,7 +2158,20 @@ const setupAutoUpdate = () => {
   // Check shortly after startup; update feed can be slow on first request.
   setTimeout(() => {
     try {
-      void autoUpdater.checkForUpdates();
+      autoUpdater.checkForUpdates().catch((error) => {
+        const normalized = normalizeUpdateError(error);
+        setUpdateState({
+          supported: !normalized.isSignatureValidationError,
+          checking: false,
+          available: false,
+          downloaded: false,
+          progressPercent: null,
+          error: normalized.userMessage
+        });
+        if (normalized.isSignatureValidationError) {
+          void maybePromptManualUpdateForSignatureError(normalized.raw);
+        }
+      });
     } catch {
       // ignore
     }
@@ -2218,8 +2276,7 @@ const setupIpc = () => {
   ipcMain.handle("config:set", async (_, next) => {
     const merged = writeConfig({ ...readConfig(), ...(next || {}) });
     let settingsMessage = "";
-    // Always maintain local cache cleanup so iCloud sync can coexist with API mode.
-    writeLocalDb(cleanupLocalDb(merged, readLocalDb()));
+    scheduleLocalDbMaintenance(merged, 500);
     if (isICloudSyncEnabled(merged)) {
       const syncRes = runICloudSyncIfNeeded(merged, { notify: true });
       if (!syncRes?.ok && syncRes?.reason === "icloud-unavailable") {
@@ -2347,9 +2404,12 @@ const setupIpc = () => {
 
   ipcMain.handle("local-sync:status", async () => {
     const cfg = readConfig();
-    const pending = listPendingLocalSyncClips(cfg);
+    const pendingCount =
+      isRemoteEnabled(cfg) && isTokenAuthEnabled(cfg) && !getLocalSyncDecision(cfg, cfg.userId)
+        ? countPendingClipsInDbFile(localClipsFile)
+        : 0;
     return localOk({
-      pendingCount: pending.length
+      pendingCount
     });
   });
 
@@ -2377,8 +2437,8 @@ const setupIpc = () => {
       return localFail("userId is missing");
     }
 
-    const pending = listPendingLocalSyncClips(cfg);
-    const total = pending.length;
+    const decision = getLocalSyncDecision(cfg, userId);
+    const total = decision ? 0 : countPendingClipsInDbFile(localClipsFile);
     const emitProgress = (phase, uploaded, failed) => {
       const safeUploaded = Math.max(0, Number(uploaded || 0));
       const safeFailed = Math.max(0, Number(failed || 0));
@@ -2396,7 +2456,7 @@ const setupIpc = () => {
     };
 
     emitProgress("start", 0, 0);
-    if (pending.length === 0) {
+    if (total === 0) {
       writeConfig(withLocalSyncDecision(cfg, userId, "imported"));
       emitProgress("done", 0, 0);
       return localOk({
@@ -2408,7 +2468,10 @@ const setupIpc = () => {
 
     let uploaded = 0;
     let failed = 0;
-    for (const clip of pending) {
+    await visitClipObjectsInFileAsync(localClipsFile, async (clip) => {
+      if (!clip || clip.isDeleted) {
+        return true;
+      }
       const res = await remoteRequest(cfg, "/clips", {
         method: "POST",
         body: JSON.stringify({
@@ -2432,7 +2495,8 @@ const setupIpc = () => {
         failed += 1;
       }
       emitProgress("progress", uploaded, failed);
-    }
+      return true;
+    }, { maxObjects: Number.MAX_SAFE_INTEGER });
 
     if (failed === 0) {
       writeConfig(withLocalSyncDecision(cfg, userId, "imported"));
@@ -2476,9 +2540,7 @@ const setupIpc = () => {
     }
 
     if (!isRemoteEnabled(cfg)) {
-      const db = readLocalDb();
-      const items = Array.isArray(db?.clips) ? db.clips : [];
-      const found = items.find((c) => c?.id === clipId) || null;
+      const found = findClipByIdInDbFile(localClipsFile, clipId);
       if (!found) {
         return { ok: false, code: "NOT_FOUND", message: "clip not found" };
       }
@@ -2776,9 +2838,12 @@ app.on("ready", async () => {
 
   // Always maintain local cache cleanup at startup.
   const cfg = readConfig();
-  writeLocalDb(cleanupLocalDb(cfg, readLocalDb()));
+  scheduleLocalDbMaintenance(cfg, 2500);
   if (isICloudSyncEnabled(cfg)) {
-    runICloudSyncIfNeeded(cfg);
+    const initialICloudSyncTimer = setTimeout(() => {
+      runICloudSyncIfNeeded(cfg);
+    }, 5000);
+    initialICloudSyncTimer.unref?.();
   }
 
   await ensureMainWindow();
@@ -2854,6 +2919,12 @@ app.on("will-quit", () => {
   }
   if (iCloudSyncTimer) {
     clearInterval(iCloudSyncTimer);
+  }
+  if (pendingICloudSyncTimer) {
+    clearTimeout(pendingICloudSyncTimer);
+  }
+  if (localDbMaintenanceTimer) {
+    clearTimeout(localDbMaintenanceTimer);
   }
   globalShortcut.unregisterAll();
 });

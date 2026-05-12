@@ -5,6 +5,8 @@ const {
   buildWindowsArtifactRenamePlan,
   extractCodeSignAuthorities,
   getAutoUpdateSupport,
+  normalizeUpdateError,
+  shouldApplyAdHocMacSignature,
   validateManifestAssetReferences
 } = require("./auto-update.cjs");
 
@@ -82,4 +84,33 @@ sha512: abc
   });
 
   assert.deepEqual(result.missing, ["Pastyx-Setup-0.3.0.exe"]);
+});
+
+test("normalizeUpdateError maps macOS signature validation failures to manual update guidance", () => {
+  const result = normalizeUpdateError(
+    new Error("New version 0.3.2 is not signed by the application owner: code signature did not pass validation")
+  );
+
+  assert.equal(result.isSignatureValidationError, true);
+  assert.match(result.userMessage, /Please update from GitHub Releases/i);
+});
+
+test("shouldApplyAdHocMacSignature skips bundles already signed with Developer ID", () => {
+  const signed = `
+Authority=Developer ID Application: Example Inc. (ABCDE12345)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+`;
+
+  assert.equal(shouldApplyAdHocMacSignature({ platform: "darwin", codeSignOutput: signed }), false);
+});
+
+test("shouldApplyAdHocMacSignature keeps unsigned mac builds launchable", () => {
+  const unsigned = `
+Signature=adhoc
+TeamIdentifier=not set
+`;
+
+  assert.equal(shouldApplyAdHocMacSignature({ platform: "darwin", codeSignOutput: unsigned }), true);
+  assert.equal(shouldApplyAdHocMacSignature({ platform: "win32", codeSignOutput: unsigned }), false);
 });

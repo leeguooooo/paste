@@ -27,8 +27,7 @@
           "arm64"
         ]
       }
-    ],
-    "identity": null
+    ]
   },
   "dmg": {
     "sign": false

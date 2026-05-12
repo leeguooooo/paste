@@ -31,6 +31,11 @@ const getAutoUpdateSupport = ({ platform, isDev, codeSignOutput }) => {
   };
 };
 
+const shouldApplyAdHocMacSignature = ({ platform, codeSignOutput }) => {
+  if (platform !== "darwin") return false;
+  return !hasTrustedMacDeveloperIdSignature(codeSignOutput);
+};
+
 const parseManifestAssetNames = (manifestText) => {
   const text = String(manifestText || "");
   const names = new Set();
@@ -85,11 +90,35 @@ const validateManifestAssetReferences = ({ manifestText, files }) => {
   return { missing };
 };
 
+const normalizeUpdateError = (errorLike) => {
+  const raw =
+    errorLike instanceof Error
+      ? String(errorLike.message || "auto update error")
+      : String(errorLike || "auto update error");
+  const isSignatureValidationError =
+    /code signature/i.test(raw) && /did not pass validation/i.test(raw);
+  if (!isSignatureValidationError) {
+    return {
+      raw,
+      userMessage: raw,
+      isSignatureValidationError: false
+    };
+  }
+  return {
+    raw,
+    userMessage:
+      "Auto-update failed signature validation. This release build is not signed with a trusted Developer ID certificate. Please update from GitHub Releases for now.",
+    isSignatureValidationError: true
+  };
+};
+
 module.exports = {
   buildWindowsArtifactRenamePlan,
   extractCodeSignAuthorities,
   getAutoUpdateSupport,
   hasTrustedMacDeveloperIdSignature,
+  normalizeUpdateError,
   parseManifestAssetNames,
+  shouldApplyAdHocMacSignature,
   validateManifestAssetReferences
 };

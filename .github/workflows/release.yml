@@ -16,7 +16,11 @@ jobs:
       matrix:
         arch: [x64, arm64]
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
+      CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MACOS_CERTIFICATE == '' && 'false' || 'true' }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -29,7 +33,58 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm run typecheck
+      - name: Prepare Apple notarization key
+        shell: bash
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_API_KEY_CONTENT:-}" ]]; then
+            if [[ -n "${APPLE_API_KEY_ID:-}" || -n "${APPLE_API_ISSUER:-}" ]]; then
+              echo "APPLE_API_KEY is required when APPLE_API_KEY_ID or APPLE_API_ISSUER is configured." >&2
+              exit 1
+            fi
+            echo "APPLE_API_KEY is not configured; macOS notarization will be skipped."
+            exit 0
+          fi
+          if [[ -z "${APPLE_API_KEY_ID:-}" || -z "${APPLE_API_ISSUER:-}" ]]; then
+            echo "APPLE_API_KEY_ID and APPLE_API_ISSUER are required when APPLE_API_KEY is configured." >&2
+            exit 1
+          fi
+          key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "${APPLE_API_KEY_CONTENT}" > "${key_path}"
+          chmod 600 "${key_path}"
+          echo "APPLE_API_KEY=${key_path}" >> "${GITHUB_ENV}"
       - run: npm --workspace @paste/macos run dist -- --mac dmg zip --${{ matrix.arch }}
+      - name: Verify Developer ID signature when certificate is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CSC_LINK:-}" ]]; then
+            echo "MACOS_CERTIFICATE is not configured; macOS auto-update will stay disabled for this release."
+            exit 0
+          fi
+          app_path="$(find apps/macos/dist-electron -maxdepth 2 -name 'Pastyx.app' -type d | head -n 1)"
+          if [[ -z "${app_path}" ]]; then
+            echo "Pastyx.app not found in apps/macos/dist-electron" >&2
+            exit 1
+          fi
+          codesign -dv --verbose=4 "${app_path}" 2>&1 | tee /tmp/pastyx-codesign.txt
+          grep -q '^Authority=Developer ID Application:' /tmp/pastyx-codesign.txt
+      - name: Verify notarization when API key is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_API_KEY:-}" ]]; then
+            echo "APPLE_API_KEY is not configured; notarization validation skipped."
+            exit 0
+          fi
+          app_path="$(find apps/macos/dist-electron -maxdepth 2 -name 'Pastyx.app' -type d | head -n 1)"
+          if [[ -z "${app_path}" ]]; then
+            echo "Pastyx.app not found in apps/macos/dist-electron" >&2
+            exit 1
+          fi
+          xcrun stapler validate "${app_path}"
       - run: node apps/macos/electron/prepare-release-assets.cjs apps/macos/dist-electron
       - name: Normalize macOS update metadata filenames
         shell: bash
