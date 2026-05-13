@@ -265,6 +265,69 @@ const listClipsFromDbFile = (file, query = {}, options = {}) => {
   };
 };
 
+const listCacheFileSignature = (file) => {
+  try {
+    const stat = fs.statSync(file);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return "missing";
+  }
+};
+
+const listCacheKey = (query = {}, options = {}) => {
+  const lite = options.lite !== false;
+  const limit = Math.max(1, Math.floor(Number(options.limit || 60)));
+  const maxScan = Math.max(limit + 1, Math.floor(Number(options.maxScan || DEFAULT_MAX_SCAN_CLIPS)));
+  return JSON.stringify({
+    q: String(query?.q || "").trim(),
+    favorite: Boolean(query?.favorite),
+    lite,
+    limit,
+    maxScan
+  });
+};
+
+const createListClipsFromDbFileCache = (file, options = {}) => {
+  const maxEntries = Math.max(1, Math.floor(Number(options.maxEntries || 24)));
+  const listFn = typeof options.listFn === "function" ? options.listFn : listClipsFromDbFile;
+  let signature = "";
+  const entries = new Map();
+
+  const invalidate = () => {
+    signature = "";
+    entries.clear();
+  };
+
+  const list = (query = {}, listOptions = {}) => {
+    const nextSignature = listCacheFileSignature(file);
+    if (nextSignature !== signature) {
+      signature = nextSignature;
+      entries.clear();
+    }
+
+    const key = listCacheKey(query, listOptions);
+    if (entries.has(key)) {
+      const cached = entries.get(key);
+      entries.delete(key);
+      entries.set(key, cached);
+      return cached;
+    }
+
+    const result = listFn(file, query, listOptions);
+    entries.set(key, result);
+    while (entries.size > maxEntries) {
+      const oldest = entries.keys().next().value;
+      entries.delete(oldest);
+    }
+    return result;
+  };
+
+  return {
+    invalidate,
+    list
+  };
+};
+
 const findClipByIdInDbFile = (file, id, options = {}) => {
   const wanted = String(id || "").trim();
   if (!wanted) return null;
@@ -469,6 +532,7 @@ module.exports = {
   DEFAULT_MAX_SCAN_CLIPS,
   compactDbFileStreaming,
   countPendingClipsInDbFile,
+  createListClipsFromDbFileCache,
   deleteClipFromDbFile,
   ensureDbFile,
   findClipByIdInDbFile,

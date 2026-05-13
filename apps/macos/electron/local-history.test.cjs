@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
   compactDbFileStreaming,
   countPendingClipsInDbFile,
+  createListClipsFromDbFileCache,
   deleteClipFromDbFile,
   findClipByIdInDbFile,
   listClipsFromDbFile,
@@ -80,6 +81,37 @@ test("findClipByIdInDbFile scans objects one at a time", () => {
   try {
     assert.equal(findClipByIdInDbFile(file, "b")?.content, "second");
     assert.equal(findClipByIdInDbFile(file, "missing"), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createListClipsFromDbFileCache reuses list results until the file changes", () => {
+  const { dir, file } = makeTempDb([
+    makeClip({ id: "a", content: "first" }),
+    makeClip({ id: "b", content: "second" })
+  ]);
+  let calls = 0;
+
+  try {
+    const cache = createListClipsFromDbFileCache(file, {
+      listFn: (...args) => {
+        calls += 1;
+        return listClipsFromDbFile(...args);
+      }
+    });
+
+    assert.deepEqual(cache.list({}, { limit: 2 }).items.map((item) => item.id), ["a", "b"]);
+    assert.deepEqual(cache.list({}, { limit: 2 }).items.map((item) => item.id), ["a", "b"]);
+    assert.equal(calls, 1);
+
+    prependClipToDbFile(file, makeClip({ id: "new", content: "newest" }));
+    assert.deepEqual(cache.list({}, { limit: 2 }).items.map((item) => item.id), ["new", "a"]);
+    assert.equal(calls, 2);
+
+    cache.invalidate();
+    assert.deepEqual(cache.list({}, { limit: 2 }).items.map((item) => item.id), ["new", "a"]);
+    assert.equal(calls, 3);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

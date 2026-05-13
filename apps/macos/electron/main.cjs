@@ -206,9 +206,9 @@ const { MAX_LOCAL_LIST_LIMIT } = require("./clip-list.cjs");
 const {
   compactDbFileStreaming,
   countPendingClipsInDbFile,
+  createListClipsFromDbFileCache,
   deleteClipFromDbFile,
   findClipByIdInDbFile,
-  listClipsFromDbFile,
   prependClipToDbFile,
   updateClipInDbFile,
   visitClipObjectsInFileAsync
@@ -234,6 +234,7 @@ const SSO_LOOPBACK_PORT = parsePort(process.env.PASTE_SSO_LOOPBACK_PORT, 45897);
 
 const configFile = path.join(app.getPath("userData"), "pastyx-macos-config.json");
 const localClipsFile = path.join(app.getPath("userData"), "pastyx-local-clips.json");
+const localListCache = createListClipsFromDbFileCache(localClipsFile);
 const iCloudDocumentsRoot = path.join(app.getPath("home"), "Library", "Mobile Documents", "com~apple~CloudDocs");
 const iCloudAppDir = path.join(iCloudDocumentsRoot, "Pastyx");
 const iCloudClipsFile = path.join(iCloudAppDir, "pastyx-local-clips.json");
@@ -609,6 +610,9 @@ const readDbFile = (file, createIfMissing = false) => {
 const writeDbFile = (file, db) => {
   const normalized = { clips: Array.isArray(db?.clips) ? db.clips : [] };
   fs.writeFileSync(file, JSON.stringify(normalized, null, 2));
+  if (file === localClipsFile) {
+    localListCache.invalidate();
+  }
 };
 
 const clipSyncTs = (clip) =>
@@ -805,10 +809,12 @@ const cleanupLocalDb = (cfg, db) => {
 const compactLocalDbStreaming = (cfg) => {
   const ms = retentionMsFromConfig(cfg);
   const cutoff = ms === null ? null : Date.now() - ms;
-  return compactDbFileStreaming(localClipsFile, {
+  const result = compactDbFileStreaming(localClipsFile, {
     cutoff,
     maxClips: 5000
   });
+  localListCache.invalidate();
+  return result;
 };
 
 const scheduleLocalDbMaintenance = (cfg, delayMs = 30_000) => {
@@ -828,7 +834,7 @@ const scheduleLocalDbMaintenance = (cfg, delayMs = 30_000) => {
 const localListClips = (cfg, query = {}) => {
   const lite = query?.lite !== false;
 
-  return localOk(listClipsFromDbFile(localClipsFile, query, {
+  return localOk(localListCache.list(query, {
     lite,
     limit: MAX_LOCAL_LIST_LIMIT
   }));
@@ -869,6 +875,7 @@ const localCreateClip = (cfg, payload) => {
     const cleaned = cleanupLocalDb(cfg, { clips: [clip, ...clips] });
     writeLocalDb(cleaned);
   }
+  localListCache.invalidate();
   scheduleLocalDbMaintenance(cfg);
   scheduleICloudSyncIfNeeded(cfg);
   return localOk(clip);
@@ -892,6 +899,7 @@ const localToggleFavorite = (cfg, id, isFavorite) => {
     const cleaned = cleanupLocalDb(cfg, { clips: next });
     writeLocalDb(cleaned);
   }
+  localListCache.invalidate();
   scheduleLocalDbMaintenance(cfg);
   scheduleICloudSyncIfNeeded(cfg);
   return localOk({ ok: true });
@@ -907,6 +915,7 @@ const localDeleteClip = (cfg, id) => {
     const cleaned = cleanupLocalDb(cfg, { clips: next });
     writeLocalDb(cleaned);
   }
+  localListCache.invalidate();
   scheduleLocalDbMaintenance(cfg);
   scheduleICloudSyncIfNeeded(cfg);
   return localOk({ ok: true });
