@@ -12,6 +12,7 @@
   "asar": true,
   "mac": {
     "category": "public.app-category.productivity",
+    "icon": "assets/icon.icns",
     "target": [
       {
         "target": "dmg",
@@ -33,6 +34,7 @@
     "sign": false
   },
   "win": {
+    "icon": "assets/icon.ico",
     "target": [
       {
         "target": "nsis",

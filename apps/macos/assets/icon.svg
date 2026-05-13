@@ -1,23 +1,33 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- macOS Rounded Rectangle Base -->
-  <rect x="128" y="128" width="768" height="768" rx="172" fill="url(#paint0_linear)"/>
-  
-  <!-- Subtle Inner Shadow/Border -->
-  <rect x="132" y="132" width="760" height="760" rx="168" stroke="white" stroke-opacity="0.2" stroke-width="8"/>
-  
-  <!-- Clipboard Symbol -->
-  <path d="M412 300C412 277.909 429.909 260 452 260H572C594.091 260 612 277.909 612 300V320H412V300Z" fill="white" fill-opacity="0.9"/>
-  <rect x="360" y="320" width="304" height="420" rx="24" fill="white" fill-opacity="0.9"/>
-  
-  <!-- Stack Detail -->
-  <rect x="420" y="440" width="184" height="24" rx="12" fill="#007AFF" fill-opacity="0.2"/>
-  <rect x="420" y="500" width="184" height="24" rx="12" fill="#007AFF" fill-opacity="0.2"/>
-  <rect x="420" y="560" width="120" height="24" rx="12" fill="#007AFF" fill-opacity="0.2"/>
-
+  <rect x="96" y="96" width="832" height="832" rx="196" fill="url(#base)"/>
+  <rect x="122" y="122" width="780" height="780" rx="174" fill="url(#surface)" opacity="0.74"/>
+  <rect x="122" y="122" width="780" height="780" rx="174" stroke="white" stroke-opacity="0.16" stroke-width="10"/>
+  <path d="M316 324C316 293.072 341.072 268 372 268H652C682.928 268 708 293.072 708 324V710C708 740.928 682.928 766 652 766H372C341.072 766 316 740.928 316 710V324Z" fill="url(#paperShadow)" opacity="0.4"/>
+  <path d="M338 306C338 275.072 363.072 250 394 250H630C660.928 250 686 275.072 686 306V692C686 722.928 660.928 748 630 748H394C363.072 748 338 722.928 338 692V306Z" fill="url(#paper)"/>
+  <path d="M430 242C430 218.804 448.804 200 472 200H552C575.196 200 594 218.804 594 242V276H430V242Z" fill="#EAF7FF"/>
+  <path d="M422 276H602C615.255 276 626 286.745 626 300V332H398V300C398 286.745 408.745 276 422 276Z" fill="#CBEAFE"/>
+  <path d="M438 434H586" stroke="#1B5B8F" stroke-width="34" stroke-linecap="round"/>
+  <path d="M438 514H586" stroke="#2F8DCE" stroke-width="34" stroke-linecap="round"/>
+  <path d="M438 594H534" stroke="#2BB673" stroke-width="34" stroke-linecap="round"/>
+  <circle cx="690" cy="676" r="86" fill="#1FDB84"/>
+  <path d="M650 679L676 705L732 647" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
   <defs>
-    <linearGradient id="paint0_linear" x1="512" y1="128" x2="512" y2="896" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#34C759"/>
-      <stop offset="1" stop-color="#007AFF"/>
+    <linearGradient id="base" x1="188" y1="146" x2="836" y2="878" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10283E"/>
+      <stop offset="0.48" stop-color="#126DA4"/>
+      <stop offset="1" stop-color="#1DBE7B"/>
+    </linearGradient>
+    <linearGradient id="surface" x1="512" y1="122" x2="512" y2="902" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#183F5E"/>
+      <stop offset="1" stop-color="#0B1B2B"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="512" y1="250" x2="512" y2="748" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DDF2FF"/>
+    </linearGradient>
+    <linearGradient id="paperShadow" x1="512" y1="268" x2="512" y2="766" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#001624"/>
+      <stop offset="1" stop-color="#001624"/>
     </linearGradient>
   </defs>
 </svg>
