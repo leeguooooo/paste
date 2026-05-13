@@ -16,9 +16,7 @@ jobs:
       matrix:
         arch: [x64, arm64]
     env:
-      CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
-      CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MACOS_CERTIFICATE == '' && 'false' || 'true' }}
+      MACOS_CERTIFICATE_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE == '' && 'false' || 'true' }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
@@ -55,12 +53,27 @@ jobs:
           printf '%s' "${APPLE_API_KEY_CONTENT}" > "${key_path}"
           chmod 600 "${key_path}"
           echo "APPLE_API_KEY=${key_path}" >> "${GITHUB_ENV}"
-      - run: npm --workspace @paste/macos run dist -- --mac dmg zip --${{ matrix.arch }}
+      - name: Build macOS artifacts
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${MACOS_CERTIFICATE:-}" ]]; then
+            export CSC_LINK="${MACOS_CERTIFICATE}"
+            export CSC_KEY_PASSWORD="${MACOS_CERTIFICATE_PASSWORD:-}"
+            export CSC_IDENTITY_AUTO_DISCOVERY=true
+          else
+            unset CSC_LINK CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npm --workspace @paste/macos run dist -- --mac dmg zip --${{ matrix.arch }}
       - name: Verify Developer ID signature when certificate is configured
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${CSC_LINK:-}" ]]; then
+          if [[ "${MACOS_CERTIFICATE_CONFIGURED}" != "true" ]]; then
             echo "MACOS_CERTIFICATE is not configured; macOS auto-update will stay disabled for this release."
             exit 0
           fi
