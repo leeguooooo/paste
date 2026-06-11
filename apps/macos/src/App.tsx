@@ -875,9 +875,12 @@ export default function App() {
   }, [showNonce]);
 
   const openSettings = useCallback(() => {
+    // Re-entry guard: the tray/menu path can fire while settings is already
+    // open and would otherwise silently reset the user's tab.
+    if (showSettings) return;
     setSettingsTab("sync");
     setShowSettings(true);
-  }, []);
+  }, [showSettings]);
 
   const closeSettings = useCallback(() => {
     setShowSettings(false);
@@ -1063,7 +1066,8 @@ export default function App() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (showSettings) {
-        if (e.key === "Escape") {
+        // Skip Esc that cancels an in-progress IME composition in a field.
+        if (e.key === "Escape" && !e.isComposing) {
           e.preventDefault();
           closeSettings();
         }

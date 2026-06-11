@@ -453,14 +453,10 @@ body {
   color: color-mix(in srgb, var(--card-muted), transparent 10%);
 }
 
-.settings-row select:focus {
-  border-color: color-mix(in srgb, var(--primary), white 10%);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.22);
-}
-
+.settings-row select:focus,
 .settings-row input[type="text"]:focus {
   border-color: color-mix(in srgb, var(--primary), white 10%);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.22);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
 }
 
 .inline-field-actions {
