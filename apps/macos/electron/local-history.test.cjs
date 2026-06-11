@@ -9,7 +9,9 @@ const {
   countPendingClipsInDbFile,
   createListClipsFromDbFileCache,
   deleteClipFromDbFile,
+  estimateClipPayloadBytesInDbFile,
   findClipByIdInDbFile,
+  importJsonHistoryFile,
   listClipsFromDbFile,
   prependClipToDbFile,
   updateClipInDbFile,
@@ -269,7 +271,9 @@ test("compactDbFileStreaming prunes by retention and removes orphaned image file
     const result = compactDbFileStreaming(file, { cutoff: now - 5000, maxClips: 10 });
 
     assert.equal(result.scanned, 4);
-    assert.equal(result.kept, 2);
+    // the fresh soft-delete tombstone survives compaction (tombstone ttl)
+    assert.equal(result.kept, 3);
+    assert.equal(findClipByIdInDbFile(file, "soft-deleted")?.isDeleted, true);
     const ids = listClipsFromDbFile(file, {}, { limit: 10 }).items.map((item) => item.id).sort();
     assert.deepEqual(ids, ["keep-1", "keep-favorite"]);
     assert.equal(fs.existsSync(imageFile), false);
@@ -378,6 +382,214 @@ test("countPendingClipsInDbFile ignores soft-deleted clips", () => {
     prependClipToDbFile(file, makeClip({ id: "c", createdAt: 1 }));
 
     assert.equal(countPendingClipsInDbFile(file), 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("estimateClipPayloadBytesInDbFile sums payload columns and stats image files without reading them", () => {
+  const { dir, file } = makeHistoryDir();
+
+  try {
+    prependClipToDbFile(file, makeClip({ id: "t1", content: "hello", contentHtml: "<p>hello</p>", createdAt: 1 }));
+    prependClipToDbFile(file, makeClip({ id: "gone", content: "bye", isDeleted: true, createdAt: 2 }));
+    prependClipToDbFile(
+      file,
+      makeClip({
+        id: "img",
+        type: "image",
+        content: null,
+        imageDataUrl,
+        imagePreviewDataUrl: "data:image/jpeg;base64,preview",
+        createdAt: 3
+      })
+    );
+
+    // per-row: LENGTH(content) + LENGTH(content_html) + LENGTH(image_preview_data_url) + 256
+    // soft-deleted rows are counted too
+    const rowBytes =
+      ("hello".length + "<p>hello</p>".length + 256) +
+      ("bye".length + 256) +
+      ("data:image/jpeg;base64,preview".length + 256);
+    const imageFile = path.join(dir, "images", "img.png");
+    const imageEstimate = () => Math.ceil(fs.statSync(imageFile).size * 1.37) + 64;
+    assert.equal(estimateClipPayloadBytesInDbFile(file), rowBytes + imageEstimate());
+
+    // stat-based: growing the file on disk moves the estimate, no read involved
+    fs.appendFileSync(imageFile, Buffer.alloc(1000));
+    assert.equal(estimateClipPayloadBytesInDbFile(file), rowBytes + imageEstimate());
+
+    // a missing image file contributes nothing
+    fs.rmSync(imageFile);
+    assert.equal(estimateClipPayloadBytesInDbFile(file), rowBytes);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("importJsonHistoryFile imports an external json without touching the source", () => {
+  const { dir, file } = makeHistoryDir();
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "pastyx-import-"));
+  const sourcePath = path.join(sourceDir, "other-device.json");
+
+  try {
+    prependClipToDbFile(file, makeClip({ id: "local", content: "local", clientUpdatedAt: 100, serverUpdatedAt: 100, createdAt: 100 }));
+    fs.writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        clips: [
+          makeClip({ id: "remote-text", content: "from icloud", createdAt: 200 }),
+          makeClip({
+            id: "remote-image",
+            type: "image",
+            imageDataUrl,
+            imagePreviewDataUrl: "data:image/jpeg;base64,preview",
+            createdAt: 50
+          }),
+          makeClip({ id: "local", content: "stale", isFavorite: true, clientUpdatedAt: 1, serverUpdatedAt: 1, createdAt: 1 })
+        ]
+      })
+    );
+    const sourceBefore = fs.readFileSync(sourcePath);
+
+    const result = importJsonHistoryFile(file, sourcePath);
+    assert.equal(result.ok, true);
+    assert.equal(result.imported, 3);
+
+    // migration upsert semantics: newer record wins, favorite OR'd
+    const list = listClipsFromDbFile(file, {}, { lite: false, limit: 10 });
+    assert.deepEqual(list.items.map((item) => item.id), ["remote-text", "local", "remote-image"]);
+    const local = list.items.find((item) => item.id === "local");
+    assert.equal(local.content, "local");
+    assert.equal(local.isFavorite, true);
+
+    // embedded image extracted to a file and hydrated on detail fetch
+    assert.equal(fs.existsSync(path.join(dir, "images", "remote-image.png")), true);
+    assert.equal(findClipByIdInDbFile(file, "remote-image")?.imageDataUrl, imageDataUrl);
+
+    // the source json is never renamed, deleted or modified
+    assert.deepEqual(fs.readdirSync(sourceDir), ["other-device.json"]);
+    assert.deepEqual(fs.readFileSync(sourcePath), sourceBefore);
+
+    // a second import is idempotent for the stored data
+    assert.equal(importJsonHistoryFile(file, sourcePath).ok, true);
+    const after = listClipsFromDbFile(file, {}, { lite: false, limit: 10 });
+    assert.deepEqual(after.items.map((item) => item.id), ["remote-text", "local", "remote-image"]);
+    assert.equal(after.items.find((item) => item.id === "local").content, "local");
+    assert.deepEqual(fs.readFileSync(sourcePath), sourceBefore);
+
+    // a missing source reports failure instead of throwing
+    assert.deepEqual(importJsonHistoryFile(file, path.join(sourceDir, "missing.json")), { ok: false, imported: 0 });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(sourceDir, { recursive: true, force: true });
+  }
+});
+
+test("compactDbFileStreaming keeps fresh tombstones and reaps expired ones with their images", () => {
+  const now = Date.now();
+  const freshTs = now - 1000;
+  const oldTs = now - 60 * 24 * 60 * 60 * 1000;
+  const { dir, file } = makeHistoryDir();
+
+  try {
+    prependClipToDbFile(
+      file,
+      makeClip({
+        id: "fresh-tombstone",
+        type: "image",
+        imageDataUrl,
+        isDeleted: true,
+        clientUpdatedAt: freshTs,
+        serverUpdatedAt: freshTs,
+        createdAt: freshTs
+      })
+    );
+    prependClipToDbFile(
+      file,
+      makeClip({
+        id: "old-tombstone",
+        type: "image",
+        imageDataUrl,
+        isDeleted: true,
+        clientUpdatedAt: oldTs,
+        serverUpdatedAt: oldTs,
+        createdAt: oldTs
+      })
+    );
+    const freshImage = path.join(dir, "images", "fresh-tombstone.png");
+    const oldImage = path.join(dir, "images", "old-tombstone.png");
+    assert.equal(fs.existsSync(freshImage), true);
+    assert.equal(fs.existsSync(oldImage), true);
+
+    // default ttl (30 days): the fresh tombstone survives, the old one is reaped
+    const result = compactDbFileStreaming(file, { maxClips: 10 });
+    assert.equal(result.kept, 1);
+    assert.equal(findClipByIdInDbFile(file, "fresh-tombstone")?.isDeleted, true);
+    assert.equal(findClipByIdInDbFile(file, "old-tombstone"), null);
+
+    // the orphan sweep keeps the live tombstone's image and removes the reaped one's
+    assert.equal(fs.existsSync(freshImage), true);
+    assert.equal(fs.existsSync(oldImage), false);
+
+    // an explicit ttl override reaps the remaining tombstone too
+    compactDbFileStreaming(file, { maxClips: 10, tombstoneTtlMs: 0 });
+    assert.equal(findClipByIdInDbFile(file, "fresh-tombstone"), null);
+    assert.equal(fs.existsSync(freshImage), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("storeClipRow skips rewriting an identical-length image file", () => {
+  const { dir, file } = makeHistoryDir();
+
+  try {
+    prependClipToDbFile(file, makeClip({ id: "image-1", type: "image", imageDataUrl, createdAt: 1 }));
+    const imageFile = path.join(dir, "images", "image-1.png");
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(imageFile, past, past);
+    const mtimeBefore = fs.statSync(imageFile).mtimeMs;
+
+    // a sync upsert replaying the identical payload leaves the file untouched
+    prependClipToDbFile(file, makeClip({ id: "image-1", type: "image", imageDataUrl, createdAt: 2 }));
+    assert.equal(fs.statSync(imageFile).mtimeMs, mtimeBefore);
+
+    // a payload of a different length is written
+    const otherBytes = Buffer.from("different-image-bytes");
+    prependClipToDbFile(
+      file,
+      makeClip({
+        id: "image-1",
+        type: "image",
+        imageDataUrl: `data:image/png;base64,${otherBytes.toString("base64")}`,
+        createdAt: 3
+      })
+    );
+    assert.deepEqual(fs.readFileSync(imageFile), otherBytes);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("image removal is synchronous so a re-added clip's image cannot vanish later", async () => {
+  const { dir, file } = makeHistoryDir();
+
+  try {
+    prependClipToDbFile(file, makeClip({ id: "image-1", type: "image", imageDataUrl, createdAt: 1 }));
+    const imageFile = path.join(dir, "images", "image-1.png");
+
+    // the delete removes the image file before returning
+    deleteClipFromDbFile(file, "image-1");
+    assert.equal(fs.existsSync(imageFile), false);
+
+    // immediately re-adding the same id recreates the image...
+    prependClipToDbFile(file, makeClip({ id: "image-1", type: "image", imageDataUrl, createdAt: 2 }));
+    assert.deepEqual(fs.readFileSync(imageFile), imageBytes);
+
+    // ...and no delayed unlink from the delete can remove it afterwards
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(fs.readFileSync(imageFile), imageBytes);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

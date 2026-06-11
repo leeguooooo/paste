@@ -8,6 +8,13 @@ const { matchesClipQuery, projectClipForList } = require("./clip-list.cjs");
 
 const DEFAULT_STREAM_CHUNK_SIZE = 128 * 1024;
 const DEFAULT_MAX_SCAN_CLIPS = 5000;
+// Soft-delete tombstones must outlive icloud sync propagation, otherwise a
+// reaped tombstone lets the deleted clip resurrect from another device.
+const DEFAULT_TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// base64 inflates payloads by 4/3 plus json quoting/field overhead
+const IMAGE_BASE64_INFLATION = 1.37;
+const IMAGE_ROW_OVERHEAD_BYTES = 64;
+const ROW_OVERHEAD_BYTES = 256;
 
 // Storage layout, derived from the legacy JSON path used as the engine key:
 //   <dir>/<name>.json              legacy database (imported once, then renamed *.migrated.bak)
@@ -284,7 +291,24 @@ const prepareStatements = (db) => ({
   minSeq: db.prepare("SELECT COALESCE(MIN(seq), 1) AS s FROM clips"),
   maxSeq: db.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM clips"),
   imagePaths: db.prepare("SELECT image_path FROM clips WHERE image_path IS NOT NULL"),
-  deleteSoftDeleted: db.prepare("DELETE FROM clips WHERE is_deleted = 1"),
+  payloadBytes: db.prepare(`
+    SELECT COALESCE(SUM(
+      COALESCE(LENGTH(content), 0) +
+      COALESCE(LENGTH(content_html), 0) +
+      COALESCE(LENGTH(image_preview_data_url), 0) +
+      ${ROW_OVERHEAD_BYTES}
+    ), 0) AS bytes FROM clips
+  `),
+  // tombstones are only reaped once older than the ttl so deletes have time to
+  // propagate through icloud sync before the row disappears
+  deleteExpiredTombstones: db.prepare(`
+    DELETE FROM clips WHERE is_deleted = 1
+      AND MAX(
+        COALESCE(server_updated_at, 0),
+        COALESCE(client_updated_at, 0),
+        COALESCE(created_at, 0)
+      ) < ?
+  `),
   deleteExpired: db.prepare("DELETE FROM clips WHERE is_favorite = 0 AND created_at < ?"),
   deleteOverCap: db.prepare(`
     DELETE FROM clips WHERE id IN (
@@ -300,6 +324,10 @@ const openEngine = (key) => {
   try {
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA synchronous = NORMAL;");
+    // Without a busy timeout a second connection (another app instance, an
+    // external inspector) makes writes throw SQLITE_BUSY immediately, which
+    // kicks callers into their legacy-json fallback paths.
+    db.exec("PRAGMA busy_timeout = 5000;");
   } catch {
     // pragmas are best-effort; defaults remain correct, just slower
   }
@@ -331,9 +359,17 @@ const ensureImagesDir = (engine) => {
   fs.mkdirSync(engine.imagesDir, { recursive: true });
 };
 
-const removeImageFileAsync = (engine, imagePath) => {
+// Synchronous on purpose: a fire-and-forget unlink of <id>.png can land AFTER
+// a newer write recreated the same path (sync upsert re-adding the clip),
+// silently deleting the fresh image. Unlinking at transition time closes that
+// race; the unlink of a single file is cheap next to the sqlite write.
+const removeImageFileSync = (engine, imagePath) => {
   if (!imagePath) return;
-  fsp.unlink(path.join(engine.imagesDir, imagePath)).catch(() => {});
+  try {
+    fs.rmSync(path.join(engine.imagesDir, imagePath), { force: true });
+  } catch {
+    // best-effort
+  }
 };
 
 const loadImageDataUrlSync = (engine, row) => {
@@ -429,10 +465,21 @@ const storeClipRow = (engine, clip, options = {}) => {
   const parsedImage = parseImageDataUrl(clip?.imageDataUrl);
   if (parsedImage) {
     const fileName = imageFileNameForClip(id, parsedImage.mime);
+    const target = path.join(engine.imagesDir, fileName);
     ensureImagesDir(engine);
-    fs.writeFileSync(path.join(engine.imagesDir, fileName), parsedImage.buffer);
+    // sync upserts replay identical images; skip the rewrite when the target
+    // already holds the same number of bytes (cheap idempotence)
+    let alreadyStored = false;
+    try {
+      alreadyStored = fs.statSync(target).size === parsedImage.buffer.length;
+    } catch {
+      alreadyStored = false;
+    }
+    if (!alreadyStored) {
+      fs.writeFileSync(target, parsedImage.buffer);
+    }
     if (previous?.image_path && previous.image_path !== fileName) {
-      removeImageFileAsync(engine, previous.image_path);
+      removeImageFileSync(engine, previous.image_path);
     }
     imagePath = fileName;
     imageMime = parsedImage.mime;
@@ -484,22 +531,18 @@ const storeClipRow = (engine, clip, options = {}) => {
   return true;
 };
 
-// One-time (and self-healing) import of the legacy JSON database. Streams the
-// file with the tolerant parser, extracts embedded images to files, upserts by
-// id keeping the newer record (favorite flag and tags are unioned), then
-// renames the JSON to *.migrated.bak. The original file is never deleted; on
-// any import failure it is left untouched for the next attempt.
-const importLegacyJsonIfPresent = (engine) => {
-  if (!fs.existsSync(engine.key)) return;
-
+// Shared tolerant json import: streams `jsonPath` with the legacy parser,
+// extracts embedded images to files and upserts by id keeping the newer record
+// (favorite flag and tags are unioned). Runs in one transaction; throws on
+// transaction failure (after rollback). Never touches the source file.
+const runJsonImportTransaction = (engine, jsonPath) => {
   let imported = 0;
   let importSeq = Math.min(0, Number(engine.st.minSeq.get()?.s ?? 1) - 1);
-  let committed = false;
 
   engine.db.exec("BEGIN IMMEDIATE");
   try {
     visitLegacyClipObjectsSync(
-      engine.key,
+      jsonPath,
       (clip) => {
         try {
           const id = String(clip?.id || "").trim();
@@ -536,20 +579,36 @@ const importLegacyJsonIfPresent = (engine) => {
       { maxObjects: Number.MAX_SAFE_INTEGER }
     );
     engine.db.exec("COMMIT");
-    committed = true;
   } catch (error) {
     try {
       engine.db.exec("ROLLBACK");
     } catch {
       // ignore
     }
+    throw error;
+  }
+
+  return imported;
+};
+
+// One-time (and self-healing) import of the legacy JSON database. Streams the
+// file with the tolerant parser, extracts embedded images to files, upserts by
+// id keeping the newer record (favorite flag and tags are unioned), then
+// renames the JSON to *.migrated.bak. The original file is never deleted; on
+// any import failure it is left untouched for the next attempt.
+const importLegacyJsonIfPresent = (engine) => {
+  if (!fs.existsSync(engine.key)) return;
+
+  let imported = 0;
+  try {
+    imported = runJsonImportTransaction(engine, engine.key);
+  } catch (error) {
     console.warn(
       "local history: legacy import failed, keeping json:",
       error instanceof Error ? error.message : String(error)
     );
+    return;
   }
-
-  if (!committed) return;
 
   engine.version += 1;
   engine.nextSeq = Math.max(engine.nextSeq, Number(engine.st.maxSeq.get()?.s || 0) + 1);
@@ -580,7 +639,7 @@ const iterateOrderedRows = (engine, limit) => {
 
 const deleteRowAndImage = (engine, row) => {
   engine.st.deleteById.run(row.id);
-  removeImageFileAsync(engine, row.image_path);
+  removeImageFileSync(engine, row.image_path);
 };
 
 const cleanupOrphanImagesSync = (engine) => {
@@ -864,18 +923,70 @@ const deleteClipFromDbFile = (file, id, options = {}) => {
   return { ok: true, changed: true, found: true };
 };
 
+// Cheap size estimate of a fully-hydrated json export of ALL rows (including
+// soft-deleted): one sql sum over the inline payload columns plus a stat-based
+// base64 estimate per referenced image file. Never reads image contents.
+const estimateClipPayloadBytesInDbFile = (file) => {
+  const engine = acquireEngine(file);
+  let total = Number(engine.st.payloadBytes.get()?.bytes || 0);
+  for (const row of engine.st.imagePaths.all()) {
+    try {
+      const size = fs.statSync(path.join(engine.imagesDir, row.image_path)).size;
+      total += Math.ceil(size * IMAGE_BASE64_INFLATION) + IMAGE_ROW_OVERHEAD_BYTES;
+    } catch {
+      // missing image file contributes nothing
+    }
+  }
+  return Math.round(total);
+};
+
+// Imports an arbitrary legacy-format json file (e.g. one written by another
+// device into icloud drive) with the same tolerant streaming parser and upsert
+// semantics as the one-time migration. Unlike the migration the source file is
+// never renamed, deleted or modified — it may belong to other devices.
+const importJsonHistoryFile = (file, jsonPath) => {
+  try {
+    const source = path.resolve(String(jsonPath || ""));
+    if (!fs.existsSync(source)) {
+      return { ok: false, imported: 0 };
+    }
+    const engine = acquireEngine(file);
+    if (source === engine.key) {
+      // the engine's own legacy path: acquireEngine already imported (and
+      // renamed) it via the migration; nothing left to do here
+      return { ok: true, imported: 0 };
+    }
+    const imported = runJsonImportTransaction(engine, source);
+    if (imported > 0) {
+      engine.version += 1;
+      engine.nextSeq = Math.max(engine.nextSeq, Number(engine.st.maxSeq.get()?.s || 0) + 1);
+    }
+    return { ok: true, imported };
+  } catch (error) {
+    console.warn(
+      "local history: json import failed:",
+      error instanceof Error ? error.message : String(error)
+    );
+    return { ok: false, imported: 0 };
+  }
+};
+
 // Retention / maintenance: cheap sql deletes plus orphaned image-file cleanup.
 // Non-favorite clips older than `cutoff` are dropped, then the newest
-// `maxClips` rows are kept.
+// `maxClips` rows are kept. Soft-deleted tombstones survive until they are
+// older than `tombstoneTtlMs` so deletes can propagate through icloud sync.
 const compactDbFileStreaming = (file, options = {}) => {
   const engine = acquireEngine(file);
   const maxClips = Math.max(1, Number(options.maxClips || DEFAULT_MAX_SCAN_CLIPS));
   const cutoff = Number.isFinite(options.cutoff) ? Number(options.cutoff) : null;
+  const tombstoneTtlMs = Number.isFinite(options.tombstoneTtlMs)
+    ? Math.max(0, Number(options.tombstoneTtlMs))
+    : DEFAULT_TOMBSTONE_TTL_MS;
   const scanned = Number(engine.st.countAll.get()?.n || 0);
 
   engine.db.exec("BEGIN IMMEDIATE");
   try {
-    engine.st.deleteSoftDeleted.run();
+    engine.st.deleteExpiredTombstones.run(Date.now() - tombstoneTtlMs);
     if (cutoff !== null) {
       engine.st.deleteExpired.run(cutoff);
     }
@@ -903,12 +1014,15 @@ const compactDbFileStreaming = (file, options = {}) => {
 
 module.exports = {
   DEFAULT_MAX_SCAN_CLIPS,
+  DEFAULT_TOMBSTONE_TTL_MS,
   compactDbFileStreaming,
   countPendingClipsInDbFile,
   createListClipsFromDbFileCache,
   deleteClipFromDbFile,
   ensureDbFile,
+  estimateClipPayloadBytesInDbFile,
   findClipByIdInDbFile,
+  importJsonHistoryFile,
   listClipsFromDbFile,
   prependClipToDbFile,
   rewriteDbFileStreaming,
