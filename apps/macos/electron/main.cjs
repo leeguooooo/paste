@@ -2109,7 +2109,9 @@ const createMainWindow = async () => {
     show: false,
     frame: false,
     hasShadow: true,
-    vibrancy: "under-window",
+    // "hud" is the Spotlight-style dark glass; "under-window" reads as a flat
+    // gray slab in light mode.
+    vibrancy: "hud",
     roundedCorners: true,
     resizable: false,
     movable: false,
