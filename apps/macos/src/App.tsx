@@ -839,8 +839,8 @@ export default function App() {
 
     const offHidden = window.macos.onWindowHidden?.(() => {
       windowVisibleRef.current = false;
-      // The main process collapses the expanded window on hide; drop the
-      // settings overlay too so the next show doesn't render it in the strip.
+      // Reset the settings overlay on hide so the next show opens on the
+      // clip list.
       setShowSettings(false);
       setSettingsBackdropDataUrl(null);
     });
@@ -870,11 +870,6 @@ export default function App() {
     setSettingsBackdropDataUrl(null);
 
     if (clipsRef.current.length > SETTINGS_BACKDROP_CAPTURE_LIMIT) {
-      try {
-        await window.macos.setWindowExpanded?.(true);
-      } catch {
-        // ignore; settings still opens inside the panel-sized window
-      }
       setShowSettings(true);
       return;
     }
@@ -887,11 +882,6 @@ export default function App() {
     } catch {
       // ignore; settings will still open (without frozen backdrop)
     } finally {
-      try {
-        await window.macos.setWindowExpanded?.(true);
-      } catch {
-        // ignore; settings still opens inside the panel-sized window
-      }
       setShowSettings(true);
     }
   }, [showSettings]);
@@ -899,7 +889,6 @@ export default function App() {
   const closeSettings = useCallback(() => {
     setShowSettings(false);
     setSettingsBackdropDataUrl(null);
-    void window.macos.setWindowExpanded?.(false);
   }, []);
 
   useEffect(() => {

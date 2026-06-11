@@ -278,11 +278,12 @@ let registeredHotkey = null;
 let hotkeyStatus = { ok: true, hotkey: null, corrected: false, message: null };
 let lastTargetApp = { name: "", bundleId: "", at: 0 };
 let suppressBlurHideUntil = 0;
-// The renderer draws a bottom shelf (350px) plus a floating toolbar above it.
-// Sizing the window to that strip keeps the compositor from blending a full
-// work-area transparent surface. Settings temporarily expands to the work area.
-const MAIN_PANEL_HEIGHT = 480;
-let mainWindowExpanded = false;
+// The window is a centered floating island near the bottom of the work area;
+// native vibrancy fills it, so the island geometry IS the visible surface.
+const ISLAND_MAX_WIDTH = 1040;
+const ISLAND_WIDTH_RATIO = 0.86;
+const ISLAND_HEIGHT = 420;
+const ISLAND_BOTTOM_MARGIN = 16;
 
 const markAppQuiting = () => {
   // Keep historical property name for compatibility with existing checks.
@@ -1864,19 +1865,12 @@ const ensureMainWindow = async () => {
 };
 
 const getMainWindowBounds = (workArea) => {
-  if (mainWindowExpanded) {
-    return {
-      x: workArea.x,
-      y: workArea.y,
-      width: workArea.width,
-      height: workArea.height
-    };
-  }
-  const height = Math.min(MAIN_PANEL_HEIGHT, workArea.height);
+  const width = Math.min(ISLAND_MAX_WIDTH, Math.floor(workArea.width * ISLAND_WIDTH_RATIO));
+  const height = Math.min(ISLAND_HEIGHT, workArea.height - ISLAND_BOTTOM_MARGIN * 2);
   return {
-    x: workArea.x,
-    y: workArea.y + workArea.height - height,
-    width: workArea.width,
+    x: workArea.x + Math.floor((workArea.width - width) / 2),
+    y: workArea.y + workArea.height - height - ISLAND_BOTTOM_MARGIN,
+    width,
     height
   };
 };
@@ -2114,9 +2108,9 @@ const createMainWindow = async () => {
     y: bounds.y,
     show: false,
     frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    hasShadow: false,
+    hasShadow: true,
+    vibrancy: "under-window",
+    roundedCorners: true,
     resizable: false,
     movable: false,
     // fullscreenable must stay false: per Electron docs, a fullscreenable
@@ -2184,22 +2178,7 @@ const createMainWindow = async () => {
     broadcastToWindows("window:shown", { at: Date.now() });
   });
   mainWindow.on("hide", () => {
-    // Collapse the settings expansion on every hide; if the renderer died or
-    // reloaded with settings open, a stale expanded flag would leave the next
-    // show as an invisible full-work-area window swallowing clicks.
-    if (mainWindowExpanded) {
-      mainWindowExpanded = false;
-      try {
-        fitMainWindowToDisplay();
-      } catch {
-        // ignore
-      }
-    }
     broadcastToWindows("window:hidden", { at: Date.now() });
-  });
-
-  mainWindow.webContents.on("render-process-gone", () => {
-    mainWindowExpanded = false;
   });
 
   mainWindow.on("close", (event) => {
@@ -3083,16 +3062,6 @@ const setupIpc = () => {
   });
 
   ipcMain.handle("window:toggle", async () => toggleMainWindow());
-
-  ipcMain.handle("window:set-expanded", async (_, expanded) => {
-    mainWindowExpanded = Boolean(expanded);
-    try {
-      fitMainWindowToDisplay();
-    } catch {
-      // ignore
-    }
-    return { ok: true, expanded: mainWindowExpanded };
-  });
 
   ipcMain.handle("system:open-external", async (_, rawUrl) => {
     const url = String(rawUrl || "").trim();
