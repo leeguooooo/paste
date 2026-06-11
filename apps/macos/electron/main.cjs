@@ -211,7 +211,8 @@ const {
   findClipByIdInDbFile,
   prependClipToDbFile,
   updateClipInDbFile,
-  visitClipObjectsInFileAsync
+  visitClipObjectsInFileAsync,
+  visitClipObjectsInFileSync
 } = require("./local-history.cjs");
 const { getAutoUpdateSupport, normalizeUpdateError } = require("./auto-update.cjs");
 
@@ -663,6 +664,47 @@ const writeLocalDb = (db) => {
   writeDbFile(localClipsFile, db);
 };
 
+const clipSyncSnapshotKey = (clip) =>
+  JSON.stringify([
+    clipSyncTs(clip),
+    Boolean(clip?.isFavorite),
+    (Array.isArray(clip?.tags) ? clip.tags.slice().sort() : []),
+    Boolean(clip?.isDeleted)
+  ]);
+
+const estimateClipJsonBytes = (clip) =>
+  (clip?.content || "").length +
+  (clip?.contentHtml || "").length +
+  (clip?.imageDataUrl || "").length +
+  (clip?.imagePreviewDataUrl || "").length +
+  256;
+
+// Reads local clips from the sqlite engine (full images hydrated for the iCloud
+// JSON export). Aborts once the serialized payload would exceed the byte budget.
+const readLocalClipsForICloudSync = (byteBudget) => {
+  const clips = [];
+  let bytes = 0;
+  let overBudget = false;
+  try {
+    visitClipObjectsInFileSync(
+      localClipsFile,
+      (clip) => {
+        bytes += estimateClipJsonBytes(clip);
+        if (bytes > byteBudget) {
+          overBudget = true;
+          return false;
+        }
+        clips.push(clip);
+        return true;
+      },
+      { hydrateImages: true }
+    );
+  } catch {
+    return { ok: false, clips: [], overBudget: false };
+  }
+  return { ok: true, clips, overBudget };
+};
+
 const syncLocalDbWithICloud = (cfg) => {
   if (!isICloudSyncEnabled(cfg)) {
     return { ok: true, changed: false, reason: "disabled" };
@@ -670,7 +712,7 @@ const syncLocalDbWithICloud = (cfg) => {
   if (!ensureICloudAppDir()) {
     return { ok: false, changed: false, reason: "icloud-unavailable" };
   }
-  if (dbFileSize(localClipsFile) > MAX_FULL_DB_READ_BYTES || dbFileSize(iCloudClipsFile) > MAX_FULL_DB_READ_BYTES) {
+  if (dbFileSize(iCloudClipsFile) > MAX_FULL_DB_READ_BYTES) {
     return {
       ok: false,
       changed: false,
@@ -679,22 +721,68 @@ const syncLocalDbWithICloud = (cfg) => {
     };
   }
 
-  const localDb = readDbFile(localClipsFile, true);
+  const localRead = readLocalClipsForICloudSync(MAX_FULL_DB_READ_BYTES);
+  if (!localRead.ok) {
+    return { ok: false, changed: false, reason: "local-read-failed" };
+  }
+  if (localRead.overBudget) {
+    return {
+      ok: false,
+      changed: false,
+      reason: "history-too-large",
+      message: "Local history is too large for automatic iCloud sync. Recent local history remains available."
+    };
+  }
+
+  // Snapshot comparable local state before merge: cleanupLocalDb mutates clip
+  // objects in place, so post-merge comparisons against the same references lie.
+  const localBeforeById = new Map(
+    localRead.clips.map((clip) => [String(clip.id), clipSyncSnapshotKey(clip)])
+  );
+
   const cloudDb = readDbFile(iCloudClipsFile, false);
+  const cloudBefore = JSON.stringify({ clips: Array.isArray(cloudDb.clips) ? cloudDb.clips : [] });
   const merged = cleanupLocalDb(cfg, {
-    clips: mergeClipsForLocalSync(localDb.clips, cloudDb.clips)
+    clips: mergeClipsForLocalSync(localRead.clips, cloudDb.clips)
   });
 
-  const localBefore = JSON.stringify(localDb);
-  const cloudBefore = JSON.stringify(cloudDb);
-  const mergedRaw = JSON.stringify(merged);
-
-  const localChanged = localBefore !== mergedRaw;
-  const cloudChanged = cloudBefore !== mergedRaw;
-
-  if (localChanged) {
-    writeDbFile(localClipsFile, merged);
+  // Local direction: upsert into the sqlite engine instead of rewriting the
+  // legacy json file (which no longer exists after migration).
+  let localChanged = false;
+  const mergedIds = new Set();
+  for (const clip of merged.clips) {
+    const id = String(clip?.id || "").trim();
+    if (!id) continue;
+    mergedIds.add(id);
+    const before = localBeforeById.get(id);
+    if (before !== undefined && before === clipSyncSnapshotKey(clip)) {
+      continue;
+    }
+    try {
+      if (before === undefined) {
+        prependClipToDbFile(localClipsFile, clip);
+      } else {
+        updateClipInDbFile(localClipsFile, id, () => clip);
+      }
+      localChanged = true;
+    } catch {
+      // best-effort; retried next sync tick
+    }
   }
+  for (const id of localBeforeById.keys()) {
+    if (mergedIds.has(id)) continue;
+    try {
+      deleteClipFromDbFile(localClipsFile, id);
+      localChanged = true;
+    } catch {
+      // best-effort; retried next sync tick
+    }
+  }
+  if (localChanged) {
+    localListCache.invalidate();
+  }
+
+  const cloudChanged = cloudBefore !== JSON.stringify({ clips: merged.clips });
   if (cloudChanged) {
     writeDbFile(iCloudClipsFile, merged);
   }
