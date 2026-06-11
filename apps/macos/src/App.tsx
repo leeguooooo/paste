@@ -866,6 +866,11 @@ export default function App() {
     setSettingsBackdropDataUrl(null);
 
     if (clipsRef.current.length > SETTINGS_BACKDROP_CAPTURE_LIMIT) {
+      try {
+        await window.macos.setWindowExpanded?.(true);
+      } catch {
+        // ignore; settings still opens inside the panel-sized window
+      }
       setShowSettings(true);
       return;
     }
@@ -878,6 +883,11 @@ export default function App() {
     } catch {
       // ignore; settings will still open (without frozen backdrop)
     } finally {
+      try {
+        await window.macos.setWindowExpanded?.(true);
+      } catch {
+        // ignore; settings still opens inside the panel-sized window
+      }
       setShowSettings(true);
     }
   }, [showSettings]);
@@ -885,6 +895,7 @@ export default function App() {
   const closeSettings = useCallback(() => {
     setShowSettings(false);
     setSettingsBackdropDataUrl(null);
+    void window.macos.setWindowExpanded?.(false);
   }, []);
 
   useEffect(() => {
@@ -1229,7 +1240,7 @@ export default function App() {
       if (res.message) {
         alert(res.message);
       }
-      setShowSettings(false);
+      closeSettings();
       await loadConfig();
       await loadAuthStatus();
       await loadICloudSyncStatus();

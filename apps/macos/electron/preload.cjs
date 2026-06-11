@@ -201,6 +201,7 @@ contextBridge.exposeInMainWorld("macos", {
   captureClipboardNow: () => ipcRenderer.invoke("clipboard:capture-now"),
 
   toggleWindow: () => ipcRenderer.invoke("window:toggle"),
+  setWindowExpanded: (expanded) => ipcRenderer.invoke("window:set-expanded", expanded),
   openExternal: (url) => ipcRenderer.invoke("system:open-external", url),
   captureWindow: () => ipcRenderer.invoke("window:capture"),
 

@@ -270,6 +270,11 @@ let registeredHotkey = null;
 let hotkeyStatus = { ok: true, hotkey: null, corrected: false, message: null };
 let lastTargetApp = { name: "", bundleId: "", at: 0 };
 let suppressBlurHideUntil = 0;
+// The renderer draws a bottom shelf (350px) plus a floating toolbar above it.
+// Sizing the window to that strip keeps the compositor from blending a full
+// work-area transparent surface. Settings temporarily expands to the work area.
+const MAIN_PANEL_HEIGHT = 480;
+let mainWindowExpanded = false;
 
 const markAppQuiting = () => {
   // Keep historical property name for compatibility with existing checks.
@@ -1674,24 +1679,41 @@ const ensureMainWindow = async () => {
   return mainWindow;
 };
 
+const getMainWindowBounds = (workArea) => {
+  if (mainWindowExpanded) {
+    return {
+      x: workArea.x,
+      y: workArea.y,
+      width: workArea.width,
+      height: workArea.height
+    };
+  }
+  const height = Math.min(MAIN_PANEL_HEIGHT, workArea.height);
+  return {
+    x: workArea.x,
+    y: workArea.y + workArea.height - height,
+    width: workArea.width,
+    height
+  };
+};
+
 const fitMainWindowToDisplay = () => {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
 
   const currentBounds = mainWindow.getBounds();
-  const display = screen.getDisplayMatching(currentBounds);
+  // Hidden (about to be shown): open on the display the user is working on.
+  // Visible: stay on the display the window already occupies.
+  const display = mainWindow.isVisible()
+    ? screen.getDisplayMatching(currentBounds)
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const workArea = display?.workArea || display?.bounds;
   if (!workArea) {
     return;
   }
 
-  const nextBounds = {
-    x: workArea.x,
-    y: workArea.y,
-    width: workArea.width,
-    height: workArea.height
-  };
+  const nextBounds = getMainWindowBounds(workArea);
   const unchanged =
     currentBounds.x === nextBounds.x &&
     currentBounds.y === nextBounds.y &&
@@ -1718,11 +1740,9 @@ const toggleMainWindow = async () => {
   void captureClipboardNow("hotkey");
   fitMainWindowToDisplay();
   suppressBlurHideUntil = Date.now() + 900;
-  try {
-    app.focus({ steal: true });
-  } catch {
-    // ignore
-  }
+  // No app.focus({ steal: true }) here: activating the whole app makes macOS
+  // switch Spaces away from fullscreen apps. The panel-type window can become
+  // key (take keyboard input) without activating the app.
   win.show();
   win.focus();
   try {
@@ -1736,6 +1756,10 @@ const toggleMainWindow = async () => {
 const showSettings = async () => {
   const win = await ensureMainWindow();
   if (!win) return;
+  if (!win.isVisible()) {
+    fitMainWindowToDisplay();
+    suppressBlurHideUntil = Date.now() + 900;
+  }
   win.show();
   win.focus();
   broadcastToWindows("ui:open-settings", { at: Date.now() });
@@ -1895,14 +1919,15 @@ const updateTrayMenu = () => {
 };
 
 const createMainWindow = async () => {
-  const display = screen.getPrimaryDisplay();
-  const { x: workAreaX, y: workAreaY, width, height } = display.workArea || display.bounds;
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const workArea = display.workArea || display.bounds;
+  const bounds = getMainWindowBounds(workArea);
 
-  mainWindow = new BrowserWindow({
-    width,
-    height,
-    x: workAreaX,
-    y: workAreaY,
+  const windowOptions = {
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
     show: false,
     frame: false,
     transparent: true,
@@ -1910,7 +1935,9 @@ const createMainWindow = async () => {
     hasShadow: false,
     resizable: false,
     movable: false,
-    fullscreenable: true,
+    // fullscreenable must stay false: per Electron docs, a fullscreenable
+    // window defeats visibleOnFullScreen and cannot overlay fullscreen apps.
+    fullscreenable: false,
     maximizable: false,
     minimizable: false,
     skipTaskbar: true,
@@ -1923,7 +1950,33 @@ const createMainWindow = async () => {
       nodeIntegration: false,
       sandbox: false
     }
-  });
+  };
+  if (process.platform === "darwin") {
+    // NSPanel-backed window: becomes key (takes keyboard input) without
+    // activating the app, so showing it doesn't switch away from a
+    // fullscreen app's Space.
+    windowOptions.type = "panel";
+  }
+
+  mainWindow = new BrowserWindow(windowOptions);
+
+  // Float above fullscreen apps: raise the level above the default
+  // "floating" and join the active Space, including fullscreen Spaces.
+  try {
+    mainWindow.setAlwaysOnTop(true, "screen-saver");
+  } catch {
+    // ignore
+  }
+  if (process.platform === "darwin") {
+    try {
+      mainWindow.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true
+      });
+    } catch {
+      // ignore
+    }
+  }
 
   if (isDev) {
     await safeLoadURL(mainWindow, devUrl);
@@ -2785,6 +2838,16 @@ const setupIpc = () => {
   });
 
   ipcMain.handle("window:toggle", async () => toggleMainWindow());
+
+  ipcMain.handle("window:set-expanded", async (_, expanded) => {
+    mainWindowExpanded = Boolean(expanded);
+    try {
+      fitMainWindowToDisplay();
+    } catch {
+      // ignore
+    }
+    return { ok: true, expanded: mainWindowExpanded };
+  });
 
   ipcMain.handle("system:open-external", async (_, rawUrl) => {
     const url = String(rawUrl || "").trim();

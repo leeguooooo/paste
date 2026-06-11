@@ -59,11 +59,6 @@ body {
   flex-direction: column;
   justify-content: flex-end;
   background: transparent;
-  transition: background 0.3s ease;
-}
-
-.app-shell.active {
-  background: rgba(0, 0, 0, 0.15);
 }
 
 .history-shelf {
