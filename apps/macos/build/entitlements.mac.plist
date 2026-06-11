@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened Runtime entitlements for the main Pastyx app bundle.
+  Only consulted when electron-builder signs with a real Developer ID identity
+  (CSC_LINK / keychain); unsigned and ad-hoc afterPack builds never read this file.
+  Keep this minimal: Electron needs JIT for V8, and clipboard access on macOS
+  requires no entitlement at all.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+  </dict>
+</plist>

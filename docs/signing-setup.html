@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pastyx macOS 签名与公证（Signing &amp; Notarization）配置手册</title>
+<style>
+:root {
+  --fg: #1d1d1f;
+  --fg-soft: #555;
+  --fg-faint: #86868b;
+  --accent: #0a6cff;
+  --border: #d8d8dc;
+  --bg-soft: #f5f5f7;
+  --bg-code: #f0f1f3;
+  --ok: #1a7f37;
+  --warn: #9a6700;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto;
+  max-width: 920px;
+  padding: 40px 28px 80px;
+  color: var(--fg);
+  font: 15px/1.7 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+header { border-bottom: 2px solid var(--fg); padding-bottom: 16px; margin-bottom: 32px; }
+header h1 { margin: 0 0 6px; font-size: 26px; line-height: 1.3; }
+header p { margin: 0; color: var(--fg-soft); }
+header .meta { color: var(--fg-faint); font-size: 13px; margin-top: 8px; }
+section { margin-bottom: 40px; }
+h2 { font-size: 20px; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin: 0 0 16px; }
+h2 .en { color: var(--fg-faint); font-size: 14px; font-weight: normal; margin-left: 8px; }
+h3 { font-size: 16px; margin: 24px 0 8px; }
+p { margin: 8px 0; }
+code {
+  background: var(--bg-code);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font: 13px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code { white-space: nowrap; }
+ol > li, ul > li { margin: 6px 0; }
+aside {
+  border-left: 3px solid var(--accent);
+  background: var(--bg-soft);
+  padding: 10px 14px;
+  margin: 14px 0;
+  border-radius: 0 6px 6px 0;
+}
+aside strong:first-child { color: var(--accent); }
+.ok { color: var(--ok); }
+.warn { color: var(--warn); }
+.step-num {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  width: 24px; height: 24px;
+  line-height: 24px;
+  text-align: center;
+  font-size: 13px;
+  margin-right: 8px;
+}
+footer { border-top: 1px solid var(--border); padding-top: 16px; color: var(--fg-faint); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Pastyx macOS 签名与公证配置手册</h1>
+  <p>从零开始：申请 Apple Developer ID 证书 → 配置 GitHub Secrets → 发布签名 + 公证（Notarized）版本 → 启用自动更新（auto-update）。</p>
+  <p class="meta">适用范围：<code>.github/workflows/release.yml</code> · <code>apps/macos/electron-builder.json</code> · electron-builder 26 · electron-updater 6</p>
+</header>
+
+<section>
+  <h2>现状与目标 <span class="en">Current behavior vs. after setup</span></h2>
+  <table>
+    <tr><th></th><th>现在（未配置 Secrets）</th><th>配置 Secrets 之后</th></tr>
+    <tr>
+      <td><strong>代码签名</strong></td>
+      <td>electron-builder 跳过签名（<code>CSC_IDENTITY_AUTO_DISCOVERY=false</code>），<code>afterPack.cjs</code> 对 .app 做 ad-hoc 签名兜底</td>
+      <td class="ok">使用 Developer ID Application 证书 + Hardened Runtime + entitlements 正式签名</td>
+    </tr>
+    <tr>
+      <td><strong>公证 Notarization</strong></td>
+      <td>跳过</td>
+      <td class="ok">electron-builder 自动提交 Apple 公证并 staple 票据</td>
+    </tr>
+    <tr>
+      <td><strong>Gatekeeper</strong></td>
+      <td>用户首次打开需手动放行（右键打开 / 系统设置）</td>
+      <td class="ok">双击直接打开，无警告</td>
+    </tr>
+    <tr>
+      <td><strong>自动更新</strong></td>
+      <td>托盘菜单显示 "Auto-update unavailable"，引导用户去 GitHub Releases 手动更新</td>
+      <td class="ok">托盘 "Check for Updates..." 可用，electron-updater 全自动更新</td>
+    </tr>
+    <tr>
+      <td><strong>CI 验证</strong></td>
+      <td>签名 / 公证校验步骤自动跳过，流水线照常出包</td>
+      <td class="ok">CI 强制校验 <code>Developer ID Application</code> 签名链 + <code>stapler validate</code>，不达标即失败</td>
+    </tr>
+  </table>
+  <aside><strong>设计原则：</strong>所有签名相关步骤都以「Secret 是否非空」为条件。不设置任何 Secret 时，发布流程与今天完全一致，零破坏。空字符串 Secret 永远不会泄漏给 electron-builder（参见提交 <code>7ca2f5d</code>）。</aside>
+</section>
+
+<section>
+  <h2>操作步骤 <span class="en">Step-by-step</span></h2>
+
+  <h3><span class="step-num">1</span>加入 Apple Developer Program（$99 / 年）</h3>
+  <ol>
+    <li>访问 <code>https://developer.apple.com/programs/enroll/</code>，用你的 Apple ID 登录并以个人（Individual）身份注册，支付 $99/年。</li>
+    <li>审核通过后，在 <code>https://developer.apple.com/account</code> 的 <strong>Membership details</strong> 页面记下 <strong>Team ID</strong>（10 位字母数字，如 <code>A1B2C3D4E5</code>）——之后要填进 <code>APPLE_TEAM_ID</code>。</li>
+  </ol>
+
+  <h3><span class="step-num">2</span>创建 "Developer ID Application" 证书</h3>
+  <ol>
+    <li>在 Mac 上打开 <strong>钥匙串访问（Keychain Access）</strong> → 菜单「证书助理」→「从证书颁发机构请求证书…」，填邮箱、选「存储到磁盘」，生成 <code>CertificateSigningRequest.certSigningRequest</code>（CSR）。私钥会留在你这台 Mac 的钥匙串里。</li>
+    <li>打开 <code>https://developer.apple.com/account/resources/certificates/add</code>，证书类型选 <strong>Developer ID Application</strong>（注意：不是 "Apple Development"，也不是 "Developer ID Installer"），上传 CSR，下载 <code>developerID_application.cer</code>。</li>
+    <li>双击 .cer 导入钥匙串。在「我的证书（My Certificates）」分类下应能看到 <code>Developer ID Application: 你的名字 (TEAMID)</code>，且左侧有展开箭头（说明私钥已配对）。</li>
+  </ol>
+  <aside><strong>关键：</strong>证书必须出现在「我的证书」分类且能展开看到私钥。如果只在「证书」分类里、不能展开，说明这台 Mac 没有对应私钥（CSR 不是在这台机器生成的），导出的 .p12 将无法用于签名。</aside>
+
+  <h3><span class="step-num">3</span>导出 .p12</h3>
+  <ol>
+    <li>钥匙串访问 →「我的证书」→ 右键 <code>Developer ID Application: …</code> →「导出…」，格式选 <strong>个人信息交换 (.p12)</strong>。</li>
+    <li>设置一个导出密码（这就是 <code>MACOS_CERTIFICATE_PASSWORD</code> / <code>CSC_KEY_PASSWORD</code>），保存为 <code>developer-id.p12</code>。</li>
+    <li>导出时选中<strong>证书那一行</strong>（会连同私钥一起导出），不要只展开后选私钥。</li>
+  </ol>
+
+  <h3><span class="step-num">4</span>base64 编码</h3>
+<pre><code>base64 -i developer-id.p12 | pbcopy   # 结果已复制到剪贴板</code></pre>
+  <p>这串 base64 文本就是 <code>MACOS_CERTIFICATE</code>（即 electron-builder 的 <code>CSC_LINK</code>）的值。</p>
+
+  <h3><span class="step-num">5</span>生成 App 专用密码（App-Specific Password）</h3>
+  <ol>
+    <li>访问 <code>https://account.apple.com</code> →「登录与安全」→「App 专用密码」→ 生成，命名如 <code>pastyx-notarize</code>。</li>
+    <li>得到形如 <code>abcd-efgh-ijkl-mnop</code> 的密码，即 <code>APPLE_APP_SPECIFIC_PASSWORD</code>。注意：这不是你的 Apple ID 登录密码。</li>
+  </ol>
+
+  <h3><span class="step-num">6</span>设置 GitHub Repo Secrets</h3>
+  <p>仓库 → <strong>Settings → Secrets and variables → Actions → New repository secret</strong>，逐个添加：</p>
+  <table>
+    <tr><th>Secret 名称</th><th>值</th><th>必需</th></tr>
+    <tr><td><code>MACOS_CERTIFICATE</code></td><td>步骤 4 的 base64 字符串（workflow 也接受别名 <code>CSC_LINK</code>，二者设其一即可）</td><td>是</td></tr>
+    <tr><td><code>MACOS_CERTIFICATE_PASSWORD</code></td><td>步骤 3 的 .p12 导出密码（别名 <code>CSC_KEY_PASSWORD</code>）</td><td>是</td></tr>
+    <tr><td><code>APPLE_ID</code></td><td>你的 Apple ID 邮箱</td><td>公证必需</td></tr>
+    <tr><td><code>APPLE_APP_SPECIFIC_PASSWORD</code></td><td>步骤 5 的 App 专用密码</td><td>公证必需</td></tr>
+    <tr><td><code>APPLE_TEAM_ID</code></td><td>步骤 1 的 Team ID</td><td>公证必需</td></tr>
+  </table>
+  <p>三个 <code>APPLE_*</code> 公证 Secret 必须同时设置；只设一部分时 CI 会在打包前直接报错提示（fail fast），不会产出半成品。</p>
+  <aside><strong>备选方案：</strong>workflow 同时支持 App Store Connect <strong>API Key</strong> 方式公证：<code>APPLE_API_KEY</code>（.p8 文件内容）+ <code>APPLE_API_KEY_ID</code> + <code>APPLE_API_ISSUER</code>。两种方式选一种即可，Apple ID 方式更简单。</aside>
+
+  <h3><span class="step-num">7</span>触发发布</h3>
+<pre><code>git tag v0.3.5
+git push origin v0.3.5</code></pre>
+  <p><code>release.yml</code> 由 <code>v*</code> tag 触发。配好 Secrets 后无需改任何代码 / 配置——签名与公证自动生效。</p>
+
+  <h3><span class="step-num">8</span>验证</h3>
+  <p><strong>CI 端</strong>（workflow 自动执行，失败即整个 release 失败）：</p>
+  <ul>
+    <li>"Verify Developer ID signature…" 步骤：<code>codesign -dv --verbose=4</code> 必须输出 <code>Authority=Developer ID Application: …</code></li>
+    <li>"Verify notarization…" 步骤：<code>xcrun stapler validate Pastyx.app</code> 通过</li>
+  </ul>
+  <p><strong>本地端</strong>（下载 Release 的 dmg 安装后）：</p>
+<pre><code>codesign -dv --verbose=2 /Applications/Pastyx.app
+# 期望: Authority=Developer ID Application: 你的名字 (TEAMID)
+#       flags=0x10000(runtime)   ← Hardened Runtime 已启用
+
+spctl -a -vv /Applications/Pastyx.app
+# 期望: accepted  source=Notarized Developer ID</code></pre>
+  <p><strong>App 内</strong>：启动 Pastyx，点菜单栏托盘图标——更新菜单项应显示可点击的 <strong>"Check for Updates..."</strong>，而不是灰色的 "Auto-update unavailable"。从下一个签名版本开始，应用即可全自动升级。</p>
+</section>
+
+<section>
+  <h2>故障排查 <span class="en">Troubleshooting</span></h2>
+  <table>
+    <tr><th>症状</th><th>原因</th><th>处理</th></tr>
+    <tr>
+      <td>electron-updater 报 <code>code signature ... did not pass validation</code>，托盘弹窗提示去 GitHub Releases 手动更新</td>
+      <td>当前已安装的版本是未签名 / ad-hoc 签名的旧包；Squirrel.Mac 要求新旧版本签名链一致</td>
+      <td>预期行为。让用户从 GitHub Releases 手动安装<strong>第一个签名版本</strong>，之后的更新即可全自动</td>
+    </tr>
+    <tr>
+      <td>CI "Verify Developer ID signature" 步骤 grep 不到 <code>Authority=Developer ID Application:</code></td>
+      <td>.p12 里装的是 "Apple Development" 等错误类型证书，或 p12 缺私钥导致 electron-builder 静默回退</td>
+      <td>回到步骤 2/3 重新签发并导出，确认证书类型为 <strong>Developer ID Application</strong> 且从「我的证书」导出</td>
+    </tr>
+    <tr>
+      <td>构建日志出现 <code>Env WARNING: CSC_LINK ... cannot be decoded</code> 或把仓库目录当证书路径</td>
+      <td>base64 串包含换行 / 被截断，或 Secret 值为空字符串</td>
+      <td>用 <code>base64 -i file.p12</code>（macOS 默认不换行）重新生成；确认 Secret 粘贴完整无空白</td>
+    </tr>
+    <tr>
+      <td>公证失败：<code>HTTP status code 401</code> / <code>Invalid credentials</code></td>
+      <td><code>APPLE_APP_SPECIFIC_PASSWORD</code> 填了 Apple ID 登录密码，或 <code>APPLE_TEAM_ID</code> 与证书 Team 不一致</td>
+      <td>重新生成 App 专用密码；核对 Membership 页面的 Team ID 与证书括号里的 TEAMID 一致</td>
+    </tr>
+    <tr>
+      <td>公证返回 <code>Invalid</code>，日志含 <code>The executable does not have the hardened runtime enabled</code></td>
+      <td><code>hardenedRuntime</code> / entitlements 配置被改掉</td>
+      <td>确认 <code>electron-builder.json</code> 中 <code>mac.hardenedRuntime: true</code> 且 <code>build/entitlements.mac*.plist</code> 两个文件存在</td>
+    </tr>
+    <tr>
+      <td><code>xcrun stapler validate</code> 失败但公证显示成功</td>
+      <td>staple 需要联网回查 Apple CDN，偶发传播延迟</td>
+      <td>等几分钟重跑该 job；若持续失败，本地 <code>xcrun stapler staple Pastyx.app</code> 看详细错误</td>
+    </tr>
+    <tr>
+      <td>导出 .p12 时「个人信息交换 (.p12)」选项是灰色的</td>
+      <td>选中的是「证书」分类下没有私钥的副本</td>
+      <td>切换到「我的证书（My Certificates）」分类再导出；若那里没有，说明私钥在别的机器上，需在生成 CSR 的那台 Mac 上操作</td>
+    </tr>
+    <tr>
+      <td>只设置了部分 <code>APPLE_*</code> Secret，CI 在 "Validate Apple ID notarization secrets" 步骤失败</td>
+      <td>三个公证 Secret 必须成组出现，且必须同时配置签名证书</td>
+      <td>预期的 fail-fast。补齐 <code>APPLE_ID</code> + <code>APPLE_APP_SPECIFIC_PASSWORD</code> + <code>APPLE_TEAM_ID</code> + <code>MACOS_CERTIFICATE</code>，或全部删掉回到无签名模式</td>
+    </tr>
+  </table>
+</section>
+
+<section>
+  <h2>背景：为什么 macOS 自动更新依赖签名 <span class="en">Why signing gates auto-update</span></h2>
+  <p>electron-updater 在 macOS 上基于 Squirrel.Mac，它强制校验更新包与已安装应用的代码签名链。未签名 / ad-hoc 签名的包无法通过校验，所以 <code>apps/macos/electron/auto-update.cjs</code> 主动检测：只有当前二进制带有受信任的 <code>Developer ID Application:</code> 签名时才启用自动更新，否则提示走 GitHub Releases 手动更新。这段逻辑是正确的保护，配好证书后它会自动放行，无需改代码。</p>
+</section>
+
+<footer>
+  Pastyx · docs/signing-setup.html · 与 <code>.github/workflows/release.yml</code>、<code>apps/macos/electron-builder.json</code> 保持同步维护
+</footer>
+
+</body>
+</html>
