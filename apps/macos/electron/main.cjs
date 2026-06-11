@@ -2036,7 +2036,10 @@ const createMainWindow = async () => {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // Keep the hidden panel's compositor warm so the hotkey reveal renders
+      // its first frames without the resume stutter background throttling causes.
+      backgroundThrottling: false
     }
   };
   if (process.platform === "darwin") {

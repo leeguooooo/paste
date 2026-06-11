@@ -21,7 +21,7 @@
   --shadow-normal: 0 8px 24px rgba(0, 0, 0, 0.08);
   --shadow-hover: 0 12px 32px rgba(0, 0, 0, 0.12);
   --shadow-selected: 0 24px 48px rgba(0, 0, 0, 0.16);
-  --pill-bg: rgba(255, 255, 255, 0.45);
+  --pill-bg: rgba(255, 255, 255, 0.6);
   --pill-fg: rgba(0, 0, 0, 0.7);
 }
 
@@ -35,7 +35,7 @@
     --shadow-normal: 0 8px 24px rgba(0, 0, 0, 0.2);
     --shadow-hover: 0 16px 40px rgba(0, 0, 0, 0.3);
     --shadow-selected: 0 32px 64px rgba(0, 0, 0, 0.4);
-    --pill-bg: rgba(0, 0, 0, 0.2);
+    --pill-bg: rgba(0, 0, 0, 0.35);
     --pill-fg: rgba(255, 255, 255, 0.8);
   }
 }
@@ -64,7 +64,6 @@ body {
 .history-shelf {
   height: 350px;
   background: var(--shelf-bg);
-  backdrop-filter: blur(60px) saturate(210%);
   border-top: 0.5px solid var(--border-color);
   display: flex;
   flex-direction: column;
@@ -91,8 +90,7 @@ body {
 
 .search-input {
   width: 440px;
-  background: rgba(44, 44, 46, 0.7);
-  backdrop-filter: blur(30px);
+  background: rgba(44, 44, 46, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
   padding: 14px 20px 14px 48px;
@@ -180,7 +178,6 @@ body {
   padding: 4px 8px;
   background: var(--pill-bg);
   color: var(--pill-fg);
-  backdrop-filter: blur(8px);
   border-radius: 6px;
   border: 0.5px solid rgba(255, 255, 255, 0.1);
 }
@@ -205,7 +202,6 @@ body {
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
-  backdrop-filter: blur(8px);
 }
 
 .clip-fav:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.3); }
@@ -310,8 +306,7 @@ body {
   right: 0;
   bottom: 0;
   left: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(18px);
+  background: rgba(0, 0, 0, 0.6);
   pointer-events: none;
 }
 
@@ -319,7 +314,6 @@ body {
 .settings-panel {
   width: clamp(720px, 88vw, 980px);
   background: var(--card-bg);
-  backdrop-filter: blur(40px);
   border: 0.5px solid var(--border-color);
   border-radius: 28px;
   padding: 24px;
@@ -606,7 +600,6 @@ body {
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s;
-  backdrop-filter: blur(12px);
 }
 
 .icon-btn:hover {
