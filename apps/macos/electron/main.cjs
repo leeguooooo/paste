@@ -210,6 +210,8 @@ const {
   deleteClipFromDbFile,
   findClipByIdInDbFile,
   prependClipToDbFile,
+  estimateClipPayloadBytesInDbFile,
+  importJsonHistoryFile,
   updateClipInDbFile,
   visitClipObjectsInFileAsync,
   visitClipObjectsInFileSync
@@ -261,6 +263,11 @@ let iCloudSyncState = {
   lastResult: "idle", // idle | ok | error | skipped
   lastMessage: ""
 };
+// mtime of the iCloud db file at the last completed sync; lets the periodic
+// watcher skip the full (image-hydrating) sync when no other device wrote it.
+let lastSyncedICloudFileMtimeMs = -1;
+// throttle for absorbing an oversized legacy cloud file into the engine
+let lastOversizedICloudAbsorbAt = 0;
 let lastClipboardFingerprint = "";
 let lastClipboardProbeFingerprint = "";
 let lastClipboardFailure = { fingerprint: "", at: 0 };
@@ -645,7 +652,9 @@ const mergeClipsForLocalSync = (localClips, cloudClips) => {
     const older = bTs >= aTs ? existing : clip;
     out.set(id, {
       ...newer,
-      isFavorite: Boolean(newer?.isFavorite || older?.isFavorite),
+      // The newer record's favorite flag wins: a boolean union would make
+      // un-favoriting impossible to propagate (the stale true always sticks).
+      isFavorite: Boolean(newer?.isFavorite),
       tags: Array.from(
         new Set(
           (Array.isArray(newer?.tags) ? newer.tags : []).concat(Array.isArray(older?.tags) ? older.tags : [])
@@ -656,12 +665,6 @@ const mergeClipsForLocalSync = (localClips, cloudClips) => {
   for (const c of Array.isArray(localClips) ? localClips : []) ingest(c);
   for (const c of Array.isArray(cloudClips) ? cloudClips : []) ingest(c);
   return Array.from(out.values());
-};
-
-const readLocalDb = () => readDbFile(localClipsFile, true);
-
-const writeLocalDb = (db) => {
-  writeDbFile(localClipsFile, db);
 };
 
 const clipSyncSnapshotKey = (clip) =>
@@ -679,30 +682,73 @@ const estimateClipJsonBytes = (clip) =>
   (clip?.imagePreviewDataUrl || "").length +
   256;
 
-// Reads local clips from the sqlite engine (full images hydrated for the iCloud
-// JSON export). Aborts once the serialized payload would exceed the byte budget.
+// Reads local clips from the sqlite engine with full images hydrated for the
+// iCloud JSON export. When the full payload would exceed the byte budget,
+// images are hydrated newest-first until the budget is spent and the remaining
+// clips travel with their inline previews only — the sync never hard-fails on
+// history size.
 const readLocalClipsForICloudSync = (byteBudget) => {
-  const clips = [];
-  let bytes = 0;
-  let overBudget = false;
+  let estimated = -1;
   try {
-    visitClipObjectsInFileSync(
-      localClipsFile,
-      (clip) => {
-        bytes += estimateClipJsonBytes(clip);
-        if (bytes > byteBudget) {
-          overBudget = true;
-          return false;
-        }
-        clips.push(clip);
-        return true;
-      },
-      { hydrateImages: true }
-    );
+    estimated = estimateClipPayloadBytesInDbFile(localClipsFile);
   } catch {
-    return { ok: false, clips: [], overBudget: false };
+    estimated = -1;
   }
-  return { ok: true, clips, overBudget };
+
+  const clips = [];
+  try {
+    if (estimated >= 0 && estimated <= byteBudget) {
+      visitClipObjectsInFileSync(
+        localClipsFile,
+        (clip) => {
+          clips.push(clip);
+          return true;
+        },
+        { hydrateImages: true }
+      );
+      return { ok: true, clips };
+    }
+
+    visitClipObjectsInFileSync(localClipsFile, (clip) => {
+      clips.push(clip);
+      return true;
+    });
+    let bytes = clips.reduce((sum, clip) => sum + estimateClipJsonBytes(clip), 0);
+    for (const clip of clips) {
+      if (bytes > byteBudget) break;
+      if (clip.imageDataUrl || (clip.type !== "image" && !clip.imagePreviewDataUrl)) continue;
+      const full = findClipByIdInDbFile(localClipsFile, clip.id);
+      const dataUrl = full?.imageDataUrl;
+      if (!dataUrl) continue;
+      if (bytes + dataUrl.length > byteBudget) break;
+      clip.imageDataUrl = dataUrl;
+      bytes += dataUrl.length;
+    }
+    return { ok: true, clips };
+  } catch {
+    return { ok: false, clips: [] };
+  }
+};
+
+// Strips full image payloads from the oldest non-favorite clips until the
+// cloud export fits the budget, so the merged write can never grow past what
+// the next read is willing to load.
+const capCloudPayloadClips = (clips, budgetBytes) => {
+  let total = 0;
+  for (const clip of clips) {
+    total += estimateClipJsonBytes(clip);
+  }
+  if (total <= budgetBytes) {
+    return clips;
+  }
+  const capped = clips.slice();
+  for (let i = capped.length - 1; i >= 0 && total > budgetBytes; i -= 1) {
+    const clip = capped[i];
+    if (!clip || clip.isFavorite || !clip.imageDataUrl) continue;
+    total -= clip.imageDataUrl.length;
+    capped[i] = { ...clip, imageDataUrl: null };
+  }
+  return capped;
 };
 
 const syncLocalDbWithICloud = (cfg) => {
@@ -712,26 +758,37 @@ const syncLocalDbWithICloud = (cfg) => {
   if (!ensureICloudAppDir()) {
     return { ok: false, changed: false, reason: "icloud-unavailable" };
   }
+  // A cloud file beyond the read budget (written by the pre-sqlite engine)
+  // would otherwise brick sync forever. Absorb it into the local engine once,
+  // then fall through and rewrite it capped below.
+  let oversizedCloudRecovered = false;
   if (dbFileSize(iCloudClipsFile) > MAX_FULL_DB_READ_BYTES) {
-    return {
-      ok: false,
-      changed: false,
-      reason: "history-too-large",
-      message: "Local history is too large for automatic iCloud sync. Recent local history remains available."
-    };
+    if (Date.now() - lastOversizedICloudAbsorbAt < 60 * 60 * 1000) {
+      return {
+        ok: false,
+        changed: false,
+        reason: "history-too-large",
+        message: "The iCloud history file is too large; a compacted rewrite is retried hourly."
+      };
+    }
+    lastOversizedICloudAbsorbAt = Date.now();
+    const imported = importJsonHistoryFile(localClipsFile, iCloudClipsFile);
+    if (!imported?.ok) {
+      return {
+        ok: false,
+        changed: false,
+        reason: "history-too-large",
+        message: "The iCloud history file is too large and could not be imported."
+      };
+    }
+    console.log(`icloud sync: absorbed oversized cloud file (${imported.imported} clips), rewriting compacted`);
+    localListCache.invalidate();
+    oversizedCloudRecovered = true;
   }
 
   const localRead = readLocalClipsForICloudSync(MAX_FULL_DB_READ_BYTES);
   if (!localRead.ok) {
     return { ok: false, changed: false, reason: "local-read-failed" };
-  }
-  if (localRead.overBudget) {
-    return {
-      ok: false,
-      changed: false,
-      reason: "history-too-large",
-      message: "Local history is too large for automatic iCloud sync. Recent local history remains available."
-    };
   }
 
   // Snapshot comparable local state before merge: cleanupLocalDb mutates clip
@@ -740,8 +797,14 @@ const syncLocalDbWithICloud = (cfg) => {
     localRead.clips.map((clip) => [String(clip.id), clipSyncSnapshotKey(clip)])
   );
 
-  const cloudDb = readDbFile(iCloudClipsFile, false);
-  const cloudBefore = JSON.stringify({ clips: Array.isArray(cloudDb.clips) ? cloudDb.clips : [] });
+  // After absorbing an oversized cloud file its content lives in the engine,
+  // so treat the cloud side as empty and let the capped rewrite replace it.
+  const cloudDb = oversizedCloudRecovered ? { clips: [] } : readDbFile(iCloudClipsFile, false);
+  const cloudBeforeById = new Map(
+    (Array.isArray(cloudDb.clips) ? cloudDb.clips : [])
+      .filter((clip) => clip && clip.id)
+      .map((clip) => [String(clip.id), clipSyncSnapshotKey(clip)])
+  );
   const merged = cleanupLocalDb(cfg, {
     clips: mergeClipsForLocalSync(localRead.clips, cloudDb.clips)
   });
@@ -782,9 +845,22 @@ const syncLocalDbWithICloud = (cfg) => {
     localListCache.invalidate();
   }
 
-  const cloudChanged = cloudBefore !== JSON.stringify({ clips: merged.clips });
+  // Per-clip snapshot comparison instead of stringifying the full payload
+  // (which materializes tens of MB of base64 just for a change check).
+  let cloudChanged = oversizedCloudRecovered || merged.clips.length !== cloudBeforeById.size;
+  if (!cloudChanged) {
+    for (const clip of merged.clips) {
+      const before = cloudBeforeById.get(String(clip?.id || ""));
+      if (before === undefined || before !== clipSyncSnapshotKey(clip)) {
+        cloudChanged = true;
+        break;
+      }
+    }
+  }
   if (cloudChanged) {
-    writeDbFile(iCloudClipsFile, merged);
+    writeDbFile(iCloudClipsFile, {
+      clips: capCloudPayloadClips(merged.clips, Math.floor(MAX_FULL_DB_READ_BYTES * 0.7))
+    });
   }
 
   return {
@@ -795,6 +871,14 @@ const syncLocalDbWithICloud = (cfg) => {
   };
 };
 
+const iCloudFileMtimeMs = () => {
+  try {
+    return fs.statSync(iCloudClipsFile).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
 const runICloudSyncIfNeeded = (cfg, { notify = false } = {}) => {
   const res = syncLocalDbWithICloud(cfg);
   const isSkipped = Boolean(res?.ok && res?.reason === "disabled");
@@ -803,6 +887,15 @@ const runICloudSyncIfNeeded = (cfg, { notify = false } = {}) => {
     lastResult: isSkipped ? "skipped" : (res?.ok ? "ok" : "error"),
     lastMessage: String(res?.reason || "")
   };
+  if (
+    (res?.ok && !isSkipped) ||
+    // Deterministic failures won't fix themselves on the next tick; hold the
+    // periodic watcher off until the cloud file actually changes.
+    res?.reason === "history-too-large" ||
+    res?.reason === "local-read-failed"
+  ) {
+    lastSyncedICloudFileMtimeMs = iCloudFileMtimeMs();
+  }
   if (notify && res?.ok && res?.localChanged) {
     broadcastToWindows("clips:changed", { source: "icloud", at: Date.now() });
   }
@@ -960,13 +1053,13 @@ const localCreateClip = (cfg, payload) => {
     createdAt: now
   };
 
+  // No legacy-json fallback here: post-migration the json file is empty, so a
+  // fallback write only resurrects it and triggers an import/rename loop.
   try {
     prependClipToDbFile(localClipsFile, clip);
-  } catch {
-    const db = readLocalDb();
-    const clips = Array.isArray(db.clips) ? db.clips : [];
-    const cleaned = cleanupLocalDb(cfg, { clips: [clip, ...clips] });
-    writeLocalDb(cleaned);
+  } catch (error) {
+    console.warn("local history: create failed:", error instanceof Error ? error.message : String(error));
+    return localFail("local history write failed");
   }
   localListCache.invalidate();
   scheduleLocalDbMaintenance(cfg);
@@ -981,16 +1074,9 @@ const localToggleFavorite = (cfg, id, isFavorite) => {
       isFavorite: Boolean(isFavorite),
       serverUpdatedAt: Date.now()
     }));
-  } catch {
-    const db = readLocalDb();
-    const clips = Array.isArray(db.clips) ? db.clips : [];
-    const next = clips.map((c) =>
-      c?.id === id
-        ? { ...c, isFavorite: Boolean(isFavorite), serverUpdatedAt: Date.now() }
-        : c
-    );
-    const cleaned = cleanupLocalDb(cfg, { clips: next });
-    writeLocalDb(cleaned);
+  } catch (error) {
+    console.warn("local history: favorite failed:", error instanceof Error ? error.message : String(error));
+    return localFail("local history write failed");
   }
   localListCache.invalidate();
   scheduleLocalDbMaintenance(cfg);
@@ -1000,13 +1086,17 @@ const localToggleFavorite = (cfg, id, isFavorite) => {
 
 const localDeleteClip = (cfg, id) => {
   try {
-    deleteClipFromDbFile(localClipsFile, id);
-  } catch {
-    const db = readLocalDb();
-    const clips = Array.isArray(db.clips) ? db.clips : [];
-    const next = clips.filter((c) => c?.id !== id);
-    const cleaned = cleanupLocalDb(cfg, { clips: next });
-    writeLocalDb(cleaned);
+    // Soft-delete tombstone instead of a hard delete: the next iCloud merge
+    // resurrects hard-deleted clips (the cloud copy wins), while a newer
+    // isDeleted record wins the timestamp merge and propagates the deletion.
+    updateClipInDbFile(localClipsFile, id, (clip) => ({
+      ...clip,
+      isDeleted: true,
+      serverUpdatedAt: Date.now()
+    }));
+  } catch (error) {
+    console.warn("local history: delete failed:", error instanceof Error ? error.message : String(error));
+    return localFail("local history delete failed");
   }
   localListCache.invalidate();
   scheduleLocalDbMaintenance(cfg);
@@ -1630,6 +1720,12 @@ const createClipFromPayload = async (payload, source = "watcher") => {
     return { ok: true, captured: true };
   }
 
+  // Local-first on remote failure: without this, a configured-but-rejected
+  // remote (expired auth, offline) silently stops recording history entirely.
+  if (!localResult) {
+    localResult = localCreateClip(cfg, body);
+  }
+
   if (localResult?.ok) {
     return {
       ok: true,
@@ -2088,7 +2184,22 @@ const createMainWindow = async () => {
     broadcastToWindows("window:shown", { at: Date.now() });
   });
   mainWindow.on("hide", () => {
+    // Collapse the settings expansion on every hide; if the renderer died or
+    // reloaded with settings open, a stale expanded flag would leave the next
+    // show as an invisible full-work-area window swallowing clicks.
+    if (mainWindowExpanded) {
+      mainWindowExpanded = false;
+      try {
+        fitMainWindowToDisplay();
+      } catch {
+        // ignore
+      }
+    }
     broadcastToWindows("window:hidden", { at: Date.now() });
+  });
+
+  mainWindow.webContents.on("render-process-gone", () => {
+    mainWindowExpanded = false;
   });
 
   mainWindow.on("close", (event) => {
@@ -2417,6 +2528,12 @@ const startICloudSyncWatcher = () => {
   iCloudSyncTimer = setInterval(() => {
     const cfg = readConfig();
     if (!isICloudSyncEnabled(cfg)) {
+      return;
+    }
+    // The full sync hydrates every local image from disk, so the periodic
+    // watcher only runs it when another device actually rewrote the iCloud
+    // file. Local mutations sync through scheduleICloudSyncIfNeeded instead.
+    if (iCloudFileMtimeMs() === lastSyncedICloudFileMtimeMs) {
       return;
     }
     runICloudSyncIfNeeded(cfg, { notify: true });
@@ -2761,13 +2878,26 @@ const setupIpc = () => {
       return localToggleFavorite(cfg, id, isFavorite);
     }
 
-    return remoteRequest(cfg, `/clips/${encodeURIComponent(id)}`, {
+    // Mirror clips:create's dual-write: the UI may be showing local clips
+    // (remote rejected), so a remote-only write silently does nothing.
+    let localRes = null;
+    if (isICloudSyncEnabled(cfg)) {
+      localRes = localToggleFavorite(cfg, id, isFavorite);
+    }
+    const remoteRes = await remoteRequest(cfg, `/clips/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify({
         isFavorite,
         clientUpdatedAt: Date.now()
       })
     });
+    if (remoteRes?.ok) {
+      return remoteRes;
+    }
+    if (localRes?.ok) {
+      return localRes;
+    }
+    return remoteRes;
   });
 
   ipcMain.handle("clips:delete", async (_, id) => {
@@ -2776,12 +2906,23 @@ const setupIpc = () => {
       return localDeleteClip(cfg, id);
     }
 
-    return remoteRequest(cfg, `/clips/${encodeURIComponent(id)}`, {
+    let localRes = null;
+    if (isICloudSyncEnabled(cfg)) {
+      localRes = localDeleteClip(cfg, id);
+    }
+    const remoteRes = await remoteRequest(cfg, `/clips/${encodeURIComponent(id)}`, {
       method: "DELETE",
       body: JSON.stringify({
         clientUpdatedAt: Date.now()
       })
     });
+    if (remoteRes?.ok) {
+      return remoteRes;
+    }
+    if (localRes?.ok) {
+      return localRes;
+    }
+    return remoteRes;
   });
 
   ipcMain.handle("clipboard:read", async () => clipboard.readText());
@@ -2993,7 +3134,21 @@ const setupIpc = () => {
   ipcMain.handle("clipboard:capture-now", async () => captureClipboardNow("manual"));
 };
 
+// A second running instance would double-capture every clipboard change and
+// contend on the sqlite history db; hand off to the existing instance instead.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    void toggleMainWindow();
+  });
+}
+
 app.on("ready", async () => {
+  if (!hasSingleInstanceLock) {
+    return;
+  }
   if (process.platform === "darwin") {
     try {
       app.dock.hide();

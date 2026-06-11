@@ -839,6 +839,10 @@ export default function App() {
 
     const offHidden = window.macos.onWindowHidden?.(() => {
       windowVisibleRef.current = false;
+      // The main process collapses the expanded window on hide; drop the
+      // settings overlay too so the next show doesn't render it in the strip.
+      setShowSettings(false);
+      setSettingsBackdropDataUrl(null);
     });
 
     const onFocus = () => scheduleRefresh();
