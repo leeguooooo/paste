@@ -2700,7 +2700,20 @@ const setupIpc = () => {
       return localOk(found);
     }
 
-    return remoteRequest(cfg, `/clips/${encodeURIComponent(clipId)}`);
+    const remoteRes = await remoteRequest(cfg, `/clips/${encodeURIComponent(clipId)}`);
+    if (remoteRes?.ok) {
+      return remoteRes;
+    }
+    // Mirror clips:list degradation: when the remote rejects (auth required,
+    // offline, ...) the list shown in the UI came from the local engine, so the
+    // detail fetch must come from it too or image/html pastes lose their payload.
+    if (isICloudSyncEnabled(cfg)) {
+      const found = findClipByIdInDbFile(localClipsFile, clipId);
+      if (found) {
+        return localOk(found);
+      }
+    }
+    return remoteRes;
   });
 
   ipcMain.handle("clips:create", async (_, payload) => {
