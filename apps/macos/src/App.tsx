@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from "react";
 import type { ClipItem, ClipType } from "@paste/shared";
 import { 
   Search, 
@@ -390,8 +390,10 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("sync");
   const [settingsBackdropDataUrl, setSettingsBackdropDataUrl] = useState<string | null>(null);
-  
+  const [showNonce, setShowNonce] = useState(0);
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const shelfRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const windowVisibleRef = useRef(false);
   const refreshTimerRef = useRef<number | null>(null);
@@ -831,6 +833,7 @@ export default function App() {
 
     const offShown = window.macos.onWindowShown?.(() => {
       windowVisibleRef.current = true;
+      setShowNonce((n) => n + 1);
       scheduleRefresh();
       if (!query && !showSettings) {
         setSelectedIndex(0);
@@ -863,6 +866,17 @@ export default function App() {
       }
     };
   }, [loadClips, query, showSettings]);
+
+  // Replay the island entrance animation on every window show without
+  // remounting the card list DOM. Layout effect so the settled state never
+  // paints a frame before the replay starts.
+  useLayoutEffect(() => {
+    const el = shelfRef.current;
+    if (!el || showNonce === 0) return;
+    el.classList.remove("island-enter");
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.classList.add("island-enter");
+  }, [showNonce]);
 
   const openSettings = useCallback(async () => {
     if (showSettings) return;
@@ -1253,50 +1267,44 @@ export default function App() {
 
   return (
     <main 
-      className={`app-shell ${clips.length > 0 ? 'active' : ''} ${showSettings ? 'settings-open' : ''}`} 
+      className={`app-shell ${showSettings ? 'settings-open' : ''}`}
       onClick={async (e) => {
         if (e.target === e.currentTarget) {
           await window.macos.toggleWindow();
         }
       }}
     >
-	      <div className="history-shelf" onClick={e => e.stopPropagation()}>
-	        <div className="toolbar">
-	          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12 }}>
-	            <div style={{ position: 'relative' }}>
-	              <Search 
-	                size={20} 
-	                style={{ position: 'absolute', left: 16, top: 14, color: 'rgba(255,255,255,0.3)' }} 
-	              />
-	              <input
-	                ref={searchInputRef}
-	                className="search-input"
-	                placeholder="Type to search history..."
-	                value={query}
-	                onChange={(e) => setQuery(e.target.value)}
-	                onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
-	                autoFocus
-	              />
-	            </div>
-              <button
-                className="icon-btn"
-                onClick={() => setFavoriteOnly((v) => !v)}
-                style={{ padding: '10px', background: favoriteOnly ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
-                title={favoriteOnly ? "Showing favorites (click to show all)" : "Show favorites only"}
-                type="button"
-              >
-                <Star size={22} fill={favoriteOnly ? "currentColor" : "transparent"} />
-              </button>
-	            <button 
-	              className="icon-btn" 
-	              onClick={() => void openSettings()}
-	              style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}
-	              title="Settings (Cmd+,)"
-	            >
-	              <Settings size={22} />
-	            </button>
-	          </div>
-	        </div>
+      <div ref={shelfRef} className="history-shelf island-enter" onClick={e => e.stopPropagation()}>
+        <div className="toolbar">
+          <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+            <Search size={20} className="search-icon" />
+            <input
+              ref={searchInputRef}
+              className="search-input"
+              placeholder="Type to search history..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if(e.key === 'Escape' || e.key === 'Enter') e.currentTarget.blur(); }}
+              autoFocus
+            />
+          </div>
+          <button
+            className={`icon-btn ${favoriteOnly ? "active" : ""}`}
+            onClick={() => setFavoriteOnly((v) => !v)}
+            title={favoriteOnly ? "Showing favorites (click to show all)" : "Show favorites only"}
+            type="button"
+          >
+            <Star size={22} fill={favoriteOnly ? "currentColor" : "transparent"} />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => void openSettings()}
+            title="Settings (Cmd+,)"
+            type="button"
+          >
+            <Settings size={22} />
+          </button>
+        </div>
 
         <div className="history-container" ref={scrollContainerRef}>
 	          {visibleClips.map((clip, index) => {

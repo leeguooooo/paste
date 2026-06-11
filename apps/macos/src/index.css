@@ -13,30 +13,26 @@
   --accent-gray: #8e8e93;
 
   /* macOS App usually defaults to system preference, but we'll define both */
-  --shelf-bg: rgba(245, 245, 247, 0.8);
-  --card-bg: #ffffff;
+  --card-bg: rgba(255, 255, 255, 0.6);
   --card-fg: #1d1d1f;
   --card-muted: rgba(0, 0, 0, 0.5);
+  --card-border: rgba(0, 0, 0, 0.12);
+  --card-highlight: rgba(255, 255, 255, 0.55);
   --border-color: rgba(0, 0, 0, 0.08);
-  --shadow-normal: 0 8px 24px rgba(0, 0, 0, 0.08);
-  --shadow-hover: 0 12px 32px rgba(0, 0, 0, 0.12);
-  --shadow-selected: 0 24px 48px rgba(0, 0, 0, 0.16);
-  --pill-bg: rgba(255, 255, 255, 0.6);
-  --pill-fg: rgba(0, 0, 0, 0.7);
+  --pill-bg: rgba(0, 0, 0, 0.06);
+  --pill-fg: rgba(0, 0, 0, 0.65);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --shelf-bg: rgba(30, 30, 30, 0.85);
-    --card-bg: #2c2c2e;
+    --card-bg: rgba(30, 30, 38, 0.55);
     --card-fg: #f5f5f7;
-    --card-muted: rgba(255, 255, 255, 0.5);
+    --card-muted: rgba(255, 255, 255, 0.55);
+    --card-border: rgba(255, 255, 255, 0.22);
+    --card-highlight: rgba(255, 255, 255, 0.15);
     --border-color: rgba(255, 255, 255, 0.1);
-    --shadow-normal: 0 8px 24px rgba(0, 0, 0, 0.2);
-    --shadow-hover: 0 16px 40px rgba(0, 0, 0, 0.3);
-    --shadow-selected: 0 32px 64px rgba(0, 0, 0, 0.4);
-    --pill-bg: rgba(0, 0, 0, 0.35);
-    --pill-fg: rgba(255, 255, 255, 0.8);
+    --pill-bg: rgba(255, 255, 255, 0.12);
+    --pill-fg: rgba(255, 255, 255, 0.85);
   }
 }
 
@@ -57,54 +53,73 @@ body {
   width: 100vw;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  padding: 14px 16px 12px;
   background: transparent;
 }
 
 .history-shelf {
-  height: 350px;
-  background: var(--shelf-bg);
-  border-top: 0.5px solid var(--border-color);
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-top: 30px;
-  position: relative;
-  box-shadow: 0 -15px 50px rgba(0,0,0,0.3);
-  animation: springUp 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
 }
 
-@keyframes springUp {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+.island-enter {
+  animation: islandIn 0.22s cubic-bezier(0.21, 1.02, 0.55, 1) both;
+}
+
+@keyframes islandIn {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
 
 .toolbar {
-  position: absolute;
-  top: -65px;
-  left: 0;
-  right: 0;
   display: flex;
-  justify-content: center;
-  z-index: 100;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--card-muted);
+  pointer-events: none;
 }
 
 .search-input {
-  width: 440px;
-  background: rgba(44, 44, 46, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--card-border);
   border-radius: 14px;
-  padding: 14px 20px 14px 48px;
-  color: white;
+  padding: 12px 20px 12px 48px;
+  color: var(--card-fg);
   font-size: 16px;
   font-weight: 500;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+  box-shadow: inset 0 1px 0 var(--card-highlight);
   outline: none;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.search-input::placeholder {
+  color: var(--card-muted);
 }
 
 .search-input:focus {
-  width: 500px;
   border-color: var(--primary);
+}
+
+@media (prefers-color-scheme: dark) {
+  .search-input {
+    background: rgba(255, 255, 255, 0.14);
+  }
 }
 
 .history-container {
@@ -112,7 +127,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--gap);
-  padding: 0 80px 30px 80px;
+  padding: 0 6px 6px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -125,26 +140,25 @@ body {
   height: var(--card-height);
   background: var(--card-bg);
   color: var(--card-fg);
-  border: 0.5px solid var(--border-color);
-  border-radius: 20px;
-  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s;
+  border: 0.5px solid var(--card-border);
+  border-top: 2px solid var(--accent, var(--primary));
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 var(--card-highlight), 0 8px 24px rgba(0, 0, 0, 0.18);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  box-shadow: var(--shadow-normal);
   cursor: pointer;
 }
 
 .clip-card:hover {
-  transform: translateY(-6px) scale(1.02);
-  box-shadow: var(--shadow-hover);
+  transform: translateY(-4px);
 }
 
 .clip-card.selected {
-  transform: scale(1.06) translateY(-12px);
-  border-color: var(--primary);
-  box-shadow: var(--shadow-selected);
+  border-color: var(--accent, var(--primary));
+  transform: translateY(-4px);
   z-index: 10;
 }
 
@@ -154,13 +168,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(135deg, var(--accent, var(--primary)), color-mix(in srgb, var(--accent, var(--primary)), white 20%));
-}
-
-@media (prefers-color-scheme: dark) {
-  .clip-head {
-    background: linear-gradient(135deg, var(--accent, var(--primary)), color-mix(in srgb, var(--accent, var(--primary)), black 20%));
-  }
 }
 
 .clip-head-left {
@@ -176,24 +183,23 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 4px 8px;
-  background: var(--pill-bg);
-  color: var(--pill-fg);
+  color: var(--accent, var(--primary));
+  background: color-mix(in srgb, var(--accent, var(--primary)) 16%, transparent);
+  border: none;
   border-radius: 6px;
-  border: 0.5px solid rgba(255, 255, 255, 0.1);
 }
 
 .clip-age {
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  color: var(--card-muted);
 }
 
 .clip-fav {
   appearance: none;
   border: 0;
   background: var(--pill-bg);
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--card-muted);
   width: 28px;
   height: 28px;
   border-radius: 8px;
@@ -201,11 +207,15 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
 }
 
-.clip-fav:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.3); }
+.clip-fav:hover { transform: scale(1.1); background: rgba(0, 0, 0, 0.1); }
 .clip-fav.on { color: #ffcc00; }
+
+@media (prefers-color-scheme: dark) {
+  .clip-fav:hover { background: rgba(255, 255, 255, 0.18); }
+}
 
 .clip-preview {
   flex: 1;
@@ -263,7 +273,7 @@ body {
 .clip-hint {
   opacity: 0;
   transform: translateX(10px);
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   color: var(--primary);
   font-weight: 700;
 }
@@ -599,11 +609,17 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.icon-btn.active {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
 }
 
 @media (max-width: 980px) {
@@ -646,5 +662,5 @@ body {
   .auth-device-code { background: rgba(255, 255, 255, 0.08); }
   .btn-cancel { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.9); }
   .btn-cancel:hover { background: rgba(255, 255, 255, 0.12); }
-  .icon-btn:hover { background: rgba(255, 255, 255, 0.14); }
+  .icon-btn:hover { background: rgba(255, 255, 255, 0.18); }
 }
