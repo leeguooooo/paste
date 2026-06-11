@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pastyx Liquid Glass 玻璃岛改造 — 设计文档</title>
+<style>
+:root {
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --accent: #0a84ff;
+  --border: #d2d2d7;
+  --bg-soft: #f5f5f7;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--fg); max-width: 880px; margin: 40px auto; padding: 0 24px; line-height: 1.7;
+}
+header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 28px; }
+header p { color: var(--muted); margin: 4px 0 0; }
+h1 { font-size: 26px; margin: 0; }
+h2 { font-size: 19px; margin-top: 36px; border-left: 3px solid var(--accent); padding-left: 10px; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); }
+code { background: var(--bg-soft); border-radius: 4px; padding: 1px 6px; font-size: 0.92em; }
+aside { background: var(--bg-soft); border-left: 3px solid var(--accent); padding: 10px 14px; margin: 16px 0; font-size: 14px; }
+ul { padding-left: 22px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pastyx Liquid Glass 玻璃岛改造</h1>
+  <p>设计文档 · 2026-06-11 · 范围：apps/macos（主面板 + 设置页） · 状态：已获用户批准</p>
+</header>
+
+<section>
+<h2>1. 目标与非目标</h2>
+<p><strong>目标</strong>：将 macOS 端 UI 从"全宽透明条带 + 不透明深色托盘"改造为 Apple Liquid Glass 风格的<strong>悬浮玻璃岛</strong>：居中贴底的圆角毛玻璃面板，真实透出桌面/全屏应用内容；卡片采用半透深底 + 类型色顶边；设置页收进岛内。</p>
+<p><strong>非目标</strong>：不追求 macOS 26 原生 Liquid Glass 的折射/流动效果（Electron 无 API）；不改变任何交互逻辑（热键、粘贴、搜索、收藏、同步）；不引入 CSS <code>backdrop-filter</code>（性能教训，2026-06-11 已全数移除）。</p>
+</section>
+
+<section>
+<h2>2. 窗口层（main.cjs）</h2>
+<table>
+<tr><th>项</th><th>现状</th><th>改为</th></tr>
+<tr><td>窗口形态</td><td>全宽 480px 底部条带，<code>transparent: true</code></td><td>岛即窗口：宽 <code>min(1040, workArea.width × 0.86)</code>，高 ≈ 420px，水平居中，底边距 16px</td></tr>
+<tr><td>玻璃材质</td><td>无（CSS 透明）</td><td><code>vibrancy: "under-window"</code> + <code>visualEffectState: "active"</code>，移除 <code>transparent</code>/<code>backgroundColor</code>，<code>roundedCorners: true</code></td></tr>
+<tr><td>保留不动</td><td colspan="2"><code>type: "panel"</code>、<code>setAlwaysOnTop(screen-saver)</code>、<code>visibleOnAllWorkspaces({visibleOnFullScreen})</code>、blur→hide、单实例锁、<code>backgroundThrottling: false</code>、光标所在屏定位</td></tr>
+<tr><td>设置展开机制</td><td><code>window:set-expanded</code> IPC 把窗口撑满工作区</td><td><strong>整套移除</strong>（IPC、preload 暴露、App.tsx 调用、hide/crash 复位逻辑），设置在岛内渲染</td></tr>
+</table>
+<aside><strong>页面背景必须保持透明</strong>（<code>body { background: transparent }</code>），vibrancy 材质才会透上来；玻璃感由系统合成器渲染，渲染进程零额外开销。</aside>
+</section>
+
+<section>
+<h2>3. 渲染层（index.css / App.tsx）</h2>
+<ul>
+  <li><strong>布局</strong>：app-shell 即岛的内容区。顶行：玻璃药丸搜索框（占主宽）+ 星标按钮 + 设置按钮（收进岛内，不再悬浮窗外）。下方横向卡片流（350px 高度区），底部留呼吸边距。</li>
+  <li><strong>卡片（已选方案 C）</strong>：深色 <code>rgba(30,30,38,0.55)</code> / 浅色 <code>rgba(255,255,255,0.6)</code>；0.5px 白/黑描边 + <code>inset 0 1px 0</code> 顶部高光；<strong>2px 类型色顶边</strong>沿用 <code>getTypeAccent</code> 配色（文本蓝 / 代码紫 / 图片绿 / 链接橙）；类型 pill 同色染色（色字 + 12–18% 同色底）。卡片不加任何 backdrop-filter。</li>
+  <li><strong>选中/悬停</strong>：仅 transform（translateY/scale）+ 边框色过渡；选中态边框换类型色、不透明度提升。阴影固定不参与过渡。</li>
+  <li><strong>深浅色</strong>：沿用 <code>prefers-color-scheme</code> 双套变量；vibrancy 材质自动跟随系统。</li>
+</ul>
+</section>
+
+<section>
+<h2>4. 设置页</h2>
+<ul>
+  <li>移除全屏蒙层 + 冻结截图背板机制（<code>captureWindow</code> 背板路径、<code>settingsBackdropDataUrl</code> 状态、相关 CSS）。</li>
+  <li>设置成为<strong>岛内视图</strong>：进入时卡片区滑出、设置视图滑入（transform 过渡），玻璃分段 Tab（Sync / Account / System），内容区在岛内滚动；Esc / 关闭按钮返回卡片区。窗口尺寸不变。</li>
+  <li><strong>托盘入口不变</strong>：托盘菜单 Settings → <code>showSettings()</code> 已有"显示窗口 + 广播 <code>ui:open-settings</code>"链路（main.cjs / App.tsx <code>onOpenSettings</code>），岛内设置视图直接复用该事件，无需新 IPC；同理入场动画复用已存在的 <code>window:shown</code> 事件（preload 已暴露），改动只在渲染层。</li>
+</ul>
+</section>
+
+<section>
+<h2>5. 动效</h2>
+<ul>
+  <li><strong>入场每次重放</strong>：监听 <code>window:shown</code> 重置动画类，岛内容 translateY(24px)+opacity 0→1，约 200ms（现 springUp 只在挂载时播一次，等于没有动画）。</li>
+  <li>所有动效仅 transform/opacity；<code>backgroundThrottling: false</code> 已保证首帧流畅。</li>
+</ul>
+</section>
+
+<section>
+<h2>6. 风险与回退</h2>
+<table>
+<tr><th>风险</th><th>处置</th></tr>
+<tr><td><code>vibrancy</code> 与 <code>type: panel</code> / 全屏可见组合在 Electron 37 的兼容性未经实测</td><td>实现的第一步先做最小窗口实验验证；若冲突，回退为纯 CSS 半透岛（布局/卡片不变，失去透桌面效果），窗口参数一行切换</td></tr>
+<tr><td>圆角为系统标准半径（约 10px），小于 mockup 的 22px</td><td>已知妥协，用户已知情接受；Electron 无自定义半径 API</td></tr>
+<tr><td>移除 expanded 机制牵连今天刚加的 hide/crash 复位逻辑</td><td>连根移除而非留壳，避免死代码；行为由"设置常驻岛内"天然覆盖</td></tr>
+</table>
+</section>
+
+<section>
+<h2>7. 验证</h2>
+<ul>
+  <li>现有 28 个单测不受影响（纯 UI 改造，不触存储/同步）；typecheck + vite build 必须干净。</li>
+  <li>真机清单：热键唤起（普通桌面 / 全屏应用上，确认玻璃透出且不切 Space）、深浅色切换、搜索聚焦输入、卡片选择/粘贴（文本+图片）、设置开关与保存、双显示器、点击岛外消失、入场动画每次重放。</li>
+</ul>
+</section>
+</body>
+</html>
