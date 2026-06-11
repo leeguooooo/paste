@@ -1,7 +1,7 @@
 {
   "name": "@paste/macos",
   "private": true,
-  "version": "0.3.5",
+  "version": "0.3.6",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
