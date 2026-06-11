@@ -284,56 +284,52 @@ body {
   transform: translateX(0);
 }
 
-/* Settings Overlay */
-.settings-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
+/* Settings — in-island view. Replaces the history shelf inside the glass
+   island; the window vibrancy provides the backdrop, so the view itself
+   stays transparent. */
+.settings-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  color: var(--card-fg);
+}
+
+.settings-enter {
+  animation: settingsIn 0.18s cubic-bezier(0.21, 1.02, 0.55, 1) both;
+}
+
+@keyframes settingsIn {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.settings-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 24px;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
 }
 
-.settings-backdrop {
-  position: absolute;
-  top: -40px;
-  right: -40px;
-  bottom: -40px;
-  left: -40px;
-  width: calc(100% + 80px);
-  height: calc(100% + 80px);
-  object-fit: cover;
-  transform: scale(1.05);
-  filter: blur(28px) saturate(1.2);
-  opacity: 0.9;
-  pointer-events: none;
+.settings-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
 }
 
-.settings-scrim {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  background: rgba(0, 0, 0, 0.6);
-  pointer-events: none;
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  padding-bottom: 4px;
 }
 
-/* Settings Refinement */
-.settings-panel {
-  width: clamp(720px, 88vw, 980px);
-  background: var(--card-bg);
-  border: 0.5px solid var(--border-color);
-  border-radius: 28px;
-  padding: 24px;
-  color: var(--card-fg);
-  box-shadow: 0 40px 100px rgba(0,0,0,0.5);
-  position: relative;
-  z-index: 1;
-  max-height: calc(100vh - 36px);
-  overflow: auto;
-}
+.settings-scroll::-webkit-scrollbar { display: none; }
 
 .settings-tabs {
   display: inline-flex;
@@ -341,16 +337,15 @@ body {
   gap: 6px;
   padding: 4px;
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--pill-bg);
   border: 0.5px solid var(--border-color);
-  margin-bottom: 14px;
 }
 
 .settings-tab {
   appearance: none;
   border: 0;
   border-radius: 9px;
-  padding: 8px 12px;
+  padding: 8px 14px;
   font-size: 12px;
   font-weight: 700;
   color: var(--card-muted);
@@ -365,8 +360,8 @@ body {
 }
 
 .settings-tab.active {
-  color: var(--card-fg);
-  background: rgba(0, 0, 0, 0.12);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
 .settings-tab-content {
@@ -375,13 +370,15 @@ body {
 
 .settings-col {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  align-items: start;
 }
 
 .settings-section {
   background: rgba(0, 0, 0, 0.03);
+  border: 0.5px solid var(--border-color);
   padding: 16px;
   border-radius: 18px;
   margin-bottom: 0;
@@ -432,7 +429,7 @@ body {
   font-family: inherit;
   outline: none;
   user-select: text;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .settings-row select {
@@ -449,7 +446,7 @@ body {
   font-family: inherit;
   outline: none;
   user-select: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .settings-row input[type="text"]::placeholder {
@@ -563,7 +560,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 12px;
 }
 
 .btn-cancel,
@@ -622,41 +619,11 @@ body {
   border-color: color-mix(in srgb, var(--primary) 40%, transparent);
 }
 
-@media (max-width: 980px) {
-  .settings-overlay {
-    padding: 14px;
-  }
-
-  .settings-panel {
-    width: min(100%, 760px);
-    padding: 18px;
-    border-radius: 20px;
-    max-height: calc(100vh - 20px);
-  }
-
-  .settings-tabs {
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px;
-  }
-
-  .settings-tab {
-    width: 100%;
-    text-align: center;
-  }
-
-  .settings-col {
-    gap: 12px;
-  }
-}
-
 @media (prefers-color-scheme: dark) {
-  .settings-section { background: rgba(255, 255, 255, 0.03); }
-  .settings-tabs { background: rgba(255, 255, 255, 0.05); }
+  .settings-section { background: rgba(255, 255, 255, 0.05); }
   .settings-tab:hover { background: rgba(255, 255, 255, 0.08); }
-  .settings-tab.active { background: rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.95); }
   .settings-row input[type="text"] { background: rgba(255, 255, 255, 0.06); }
+  .settings-row select { background: rgba(255, 255, 255, 0.06); }
   .status-badge { background: rgba(255, 255, 255, 0.08); }
   .auth-device-box { background: rgba(255, 255, 255, 0.04); }
   .auth-device-code { background: rgba(255, 255, 255, 0.08); }

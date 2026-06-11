@@ -61,8 +61,6 @@ type LocalSyncProgress = {
 
 type SettingsTab = "sync" | "account" | "system";
 
-const SETTINGS_BACKDROP_CAPTURE_LIMIT = 24;
-
 const emptyConfig: AppConfig = {
   apiBase: "",
   userId: "mac_user_demo",
@@ -389,7 +387,6 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("sync");
-  const [settingsBackdropDataUrl, setSettingsBackdropDataUrl] = useState<string | null>(null);
   const [showNonce, setShowNonce] = useState(0);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -800,7 +797,7 @@ export default function App() {
 
   useEffect(() => {
     const off = window.macos.onOpenSettings?.(() => {
-      void openSettings();
+      openSettings();
     });
     return () => {
       try {
@@ -842,10 +839,9 @@ export default function App() {
 
     const offHidden = window.macos.onWindowHidden?.(() => {
       windowVisibleRef.current = false;
-      // Reset the settings overlay on hide so the next show opens on the
+      // Reset the settings view on hide so the next show opens on the
       // clip list.
       setShowSettings(false);
-      setSettingsBackdropDataUrl(null);
     });
 
     const onFocus = () => scheduleRefresh();
@@ -878,31 +874,13 @@ export default function App() {
     el.classList.add("island-enter");
   }, [showNonce]);
 
-  const openSettings = useCallback(async () => {
-    if (showSettings) return;
+  const openSettings = useCallback(() => {
     setSettingsTab("sync");
-    setSettingsBackdropDataUrl(null);
-
-    if (clipsRef.current.length > SETTINGS_BACKDROP_CAPTURE_LIMIT) {
-      setShowSettings(true);
-      return;
-    }
-
-    try {
-      const res = await window.macos.captureWindow();
-      if (res?.ok && typeof res.dataUrl === "string" && res.dataUrl.startsWith("data:image/")) {
-        setSettingsBackdropDataUrl(res.dataUrl);
-      }
-    } catch {
-      // ignore; settings will still open (without frozen backdrop)
-    } finally {
-      setShowSettings(true);
-    }
-  }, [showSettings]);
+    setShowSettings(true);
+  }, []);
 
   const closeSettings = useCallback(() => {
     setShowSettings(false);
-    setSettingsBackdropDataUrl(null);
   }, []);
 
   useEffect(() => {
@@ -1084,7 +1062,13 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (showSettings) return;
+      if (showSettings) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeSettings();
+        }
+        return;
+      }
       const currentClips = clipsRef.current;
       const currentVisibleClips = visibleClipsRef.current;
       const currentSelectedIndex = selectedIndexRef.current;
@@ -1150,7 +1134,7 @@ export default function App() {
         case ",":
           if (e.metaKey) {
             e.preventDefault();
-            void openSettings();
+            openSettings();
           }
           break;
         default:
@@ -1168,7 +1152,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showSettings, query, openSettings]);
+  }, [showSettings, query, openSettings, closeSettings]);
 
   const setSelectedIndexFromHover = useCallback((index: number) => {
     selectionReasonRef.current = "hover";
@@ -1266,14 +1250,15 @@ export default function App() {
   };
 
   return (
-    <main 
-      className={`app-shell ${showSettings ? 'settings-open' : ''}`}
+    <main
+      className="app-shell"
       onClick={async (e) => {
         if (e.target === e.currentTarget) {
           await window.macos.toggleWindow();
         }
       }}
     >
+      {!showSettings && (
       <div ref={shelfRef} className="history-shelf island-enter" onClick={e => e.stopPropagation()}>
         <div className="toolbar">
           <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
@@ -1298,7 +1283,7 @@ export default function App() {
           </button>
           <button
             className="icon-btn"
-            onClick={() => void openSettings()}
+            onClick={openSettings}
             title="Settings (Cmd+,)"
             type="button"
           >
@@ -1370,27 +1355,12 @@ export default function App() {
           })}
         </div>
       </div>
+      )}
 
       {showSettings && (
-        <div className="settings-overlay" onClick={closeSettings}>
-          {settingsBackdropDataUrl && (
-            <img
-              className="settings-backdrop"
-              src={settingsBackdropDataUrl}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-            />
-          )}
-          <div className="settings-scrim" aria-hidden="true" />
-          <div className="settings-panel" onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-              <h2 style={{ margin: 0 }}>Preferences</h2>
-              <button className="icon-btn" onClick={closeSettings}>
-                <X size={24} />
-              </button>
-            </div>
-            
+        <div className="settings-view settings-enter" onClick={e => e.stopPropagation()}>
+          <div className="settings-header">
+            <h2 className="settings-title">Preferences</h2>
             <div className="settings-tabs" role="tablist" aria-label="Settings categories">
               <button
                 type="button"
@@ -1414,7 +1384,12 @@ export default function App() {
                 System
               </button>
             </div>
+            <button className="icon-btn" onClick={closeSettings} title="Close settings" type="button">
+              <X size={22} />
+            </button>
+          </div>
 
+          <div className="settings-scroll">
             <div className="settings-tab-content">
               {settingsTab === "sync" && (
                 <div className="settings-col">
@@ -1657,11 +1632,11 @@ export default function App() {
                 </div>
               )}
             </div>
+          </div>
 
-	            <div className="settings-actions">
-	              <button className="btn-cancel" onClick={closeSettings}>Cancel</button>
-	              <button className="btn-save" onClick={saveConfig}>Save Changes</button>
-	            </div>
+          <div className="settings-actions">
+            <button className="btn-cancel" onClick={closeSettings}>Cancel</button>
+            <button className="btn-save" onClick={saveConfig}>Save Changes</button>
           </div>
         </div>
       )}

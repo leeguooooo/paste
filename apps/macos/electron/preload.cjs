@@ -202,7 +202,6 @@ contextBridge.exposeInMainWorld("macos", {
 
   toggleWindow: () => ipcRenderer.invoke("window:toggle"),
   openExternal: (url) => ipcRenderer.invoke("system:open-external", url),
-  captureWindow: () => ipcRenderer.invoke("window:capture"),
 
   onOpenSettings: (cb) => {
     const listener = (_evt, payload) => cb(payload);
