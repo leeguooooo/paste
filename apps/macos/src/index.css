@@ -1,7 +1,7 @@
 :root {
   --card-width: 280px;
-  --card-height: 200px;
-  --gap: 28px;
+  --card-height: 244px;
+  --gap: 20px;
   --primary: #007aff;
   
   /* Shared Visual Palette */
@@ -100,7 +100,7 @@ body {
   flex: 1;
   min-width: 0;
   background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 16px;
   padding: 12px 20px 12px 48px;
   color: var(--card-fg);
@@ -115,8 +115,11 @@ body {
   color: var(--card-muted);
 }
 
+/* the field is autofocused, so "focus" is the resting state - brighten gently
+   instead of shouting with a permanent accent ring */
 .search-input:focus {
-  border-color: var(--primary);
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .history-container {
@@ -137,11 +140,11 @@ body {
   height: var(--card-height);
   background: var(--card-bg);
   color: var(--card-fg);
+  /* type color lives in the pill only; the frame stays a neutral hairline */
   border: 0.5px solid var(--card-border);
-  border-top: 2px solid var(--accent, var(--primary));
   border-radius: 16px;
   box-shadow: inset 0 1px 0 var(--card-highlight), 0 8px 24px rgba(0, 0, 0, 0.28);
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s, background 0.2s;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -164,7 +167,9 @@ body {
 }
 
 .clip-card.selected {
-  border-color: var(--accent, var(--primary));
+  /* lift + brighten with a soft accent wash instead of a loud painted frame */
+  border-color: color-mix(in srgb, var(--accent, var(--primary)) 60%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--primary)) 9%, var(--card-bg));
   transform: translateY(-4px);
   z-index: 10;
 }
