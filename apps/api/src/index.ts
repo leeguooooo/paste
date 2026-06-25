@@ -272,17 +272,22 @@ const readSsoIdentity = async (request: Request, env: Env): Promise<SsoIdentityR
   const payload = (await response.json().catch(() => null)) as Partial<SsoUserInfo> | null;
   const sub = typeof payload?.sub === "string" ? payload.sub.trim() : "";
   if (!sub) return { status: "invalid" };
+  const gaid = typeof payload?.gaid === "string" ? payload.gaid.trim() : "";
+  // Key paste data by the GLOBAL account id (stable across clients), not the
+  // per-client pairwise `sub` — otherwise paste-web and paste-macos resolve to
+  // different user ids for the same person and never share clipboard data.
+  const principalId = gaid || sub;
 
   return {
     status: "ok",
     identity: {
-      userId: sub,
+      userId: principalId,
       deviceId: headerDeviceId || "web_browser"
     },
     user: {
       sub,
       tid: typeof payload?.tid === "string" ? payload.tid : undefined,
-      gaid: typeof payload?.gaid === "string" ? payload.gaid : undefined,
+      gaid: gaid || undefined,
       email: typeof payload?.email === "string" ? payload.email : undefined,
       name: typeof payload?.name === "string" ? payload.name : undefined
     }
@@ -2175,7 +2180,7 @@ const handleAuthMe = async (request: Request, env: Env): Promise<Response> => {
       return ok({
         authenticated: true,
         user: {
-          userId: sso.user.sub,
+          userId: sso.user.gaid ?? sso.user.sub,
           githubLogin: sso.user.gaid ?? sso.user.sub,
           githubId: 0,
           email: sso.user.email,

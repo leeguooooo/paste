@@ -498,10 +498,31 @@ export default function App() {
         setAuthUser(data.data.user);
         setUserId(data.data.user.userId);
         setSsoError("");
-      } else {
-        if (data.ok && data.data.authMode && data.data.authMode !== "legacy" && ssoAccessToken) {
-          clearSsoTokens();
+      } else if (data.ok && data.data.authMode && data.data.authMode !== "legacy") {
+        // The SSO access token is short-lived (~10 min). Before signing the user
+        // out, try to silently refresh with the stored refresh token.
+        const refreshToken = localStorage.getItem(SSO_REFRESH_TOKEN_KEY) || "";
+        let recovered = false;
+        if (refreshToken) {
+          const refreshed = await exchangeSsoToken({ grantType: "refresh_token", refreshToken });
+          if (refreshed?.accessToken) {
+            const retry = await fetch(`${API_BASE}/auth/me`, {
+              headers: { authorization: `Bearer ${refreshed.accessToken}` }
+            });
+            const retryData: ApiResponse<AuthMeData> = await retry.json();
+            if (retryData.ok && retryData.data.authenticated && retryData.data.user) {
+              setAuthUser(retryData.data.user);
+              setUserId(retryData.data.user.userId);
+              setSsoError("");
+              recovered = true;
+            }
+          }
         }
+        if (!recovered) {
+          if (ssoAccessToken || refreshToken) clearSsoTokens();
+          setAuthUser(null);
+        }
+      } else {
         setAuthUser(null);
       }
     } catch (e) {
