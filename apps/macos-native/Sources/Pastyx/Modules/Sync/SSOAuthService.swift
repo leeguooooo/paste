@@ -33,7 +33,7 @@ public final class SSOAuthService: AuthService {
         // Must match the issuer the paste API trusts (SSO_ISSUER in the API's
         // wrangler config) — otherwise the authorization code is signed by a
         // different issuer than the one the broker exchanges/verifies against.
-        var s = Self.env("PASTE_SSO_ISSUER", "https://cloudflare-sso.pages.dev")
+        var s = Self.env("PASTE_SSO_ISSUER", "https://account.leeguoo.com")
         while s.hasSuffix("/") { s.removeLast() }
         return s
     }
