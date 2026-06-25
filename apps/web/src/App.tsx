@@ -438,8 +438,24 @@ export default function App() {
     localStorage.removeItem(SSO_STATE_KEY);
     localStorage.removeItem(SSO_CODE_VERIFIER_KEY);
 
+    // Popup mode: we were opened by startSsoSignIn. Report back to the opener
+    // (which shares our origin + localStorage) and close, without navigating it.
+    const isPopup = typeof window !== "undefined" && !!window.opener && window.opener !== window;
+    const finishPopup = (ok: boolean) => {
+      try {
+        window.opener?.postMessage({ type: "paste-sso", ok }, window.location.origin);
+      } catch {
+        /* ignore */
+      }
+      window.close();
+    };
+
     if (!expectedState || !codeVerifier || expectedState !== state) {
       console.error("SSO callback state mismatch");
+      if (isPopup) {
+        finishPopup(false);
+        return;
+      }
       setSsoError("SSO state mismatch. Please try signing in again.");
       const clean = `${SSO_POST_AUTH_PATH}${window.location.hash || ""}` || "/";
       window.history.replaceState({}, document.title, clean);
@@ -453,6 +469,12 @@ export default function App() {
       codeVerifier,
       redirectUri
     });
+
+    if (isPopup) {
+      finishPopup(!!exchanged);
+      return;
+    }
+
     if (!exchanged) {
       setSsoError("SSO token exchange failed. Please try again.");
     } else {
@@ -481,7 +503,18 @@ export default function App() {
     authUrl.searchParams.set("state", state);
     authUrl.searchParams.set("code_challenge", codeChallenge);
     authUrl.searchParams.set("code_challenge_method", "S256");
-    window.location.assign(authUrl.toString());
+    const url = authUrl.toString();
+    // Prefer a popup so the main page never navigates away; the callback posts
+    // the result back (see the message listener + maybeHandleSsoCallback). Fall
+    // back to a full-page redirect when the popup is blocked.
+    const popup = window.open(
+      url,
+      "paste-sso-login",
+      "width=480,height=720,menubar=no,toolbar=no,location=no,status=no"
+    );
+    if (!popup) {
+      window.location.assign(url);
+    }
   }, [ssoEnabled]);
 
   const loadAuth = useCallback(async () => {
@@ -615,6 +648,25 @@ export default function App() {
       await loadAuth();
     })();
   }, [maybeHandleSsoCallback, loadAuth]);
+
+  // Receive the popup login result (same-origin postMessage from the SSO
+  // callback). On success the token is already persisted; just refresh auth.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: string; ok?: boolean } | null;
+      if (!data || data.type !== "paste-sso") return;
+      if (data.ok) {
+        setSsoError("");
+        void loadAuth();
+        void loadClips(true);
+      } else {
+        setSsoError("SSO sign-in failed. Please try again.");
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [loadAuth, loadClips]);
 
   useEffect(() => {
     if (!authReady) return;
