@@ -42,6 +42,12 @@ public struct AppConfig: Codable, Sendable, Equatable {
     public var authGithubLogin: String
     public var icloudSync: Bool
 
+    /// One-time bulk-upload decision recorded per userId after SSO login.
+    /// Maps userId -> "imported" | "skipped". Mirrors the Electron config field
+    /// `localSyncDecisionByUser` (real config shows `{"leeguooooo":"imported"}`).
+    /// Required so the SSO bulk-upload prompt doesn't re-fire forever.
+    public var localSyncDecisionByUser: [String: String]
+
     public init(
         apiBase: String = "",
         userId: String = "mac_user_demo",
@@ -52,7 +58,8 @@ public struct AppConfig: Codable, Sendable, Equatable {
         hotkey: String = "CommandOrControl+Shift+V",
         authToken: String = "",
         authGithubLogin: String = "",
-        icloudSync: Bool = false
+        icloudSync: Bool = false,
+        localSyncDecisionByUser: [String: String] = [:]
     ) {
         self.apiBase = apiBase
         self.userId = userId
@@ -64,6 +71,25 @@ public struct AppConfig: Codable, Sendable, Equatable {
         self.authToken = authToken
         self.authGithubLogin = authGithubLogin
         self.icloudSync = icloudSync
+        self.localSyncDecisionByUser = localSyncDecisionByUser
+    }
+
+    // Lenient decoder: every field defaults so an older config JSON missing the
+    // newer keys (e.g. localSyncDecisionByUser) still round-trips.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppConfig()
+        apiBase = try c.decodeIfPresent(String.self, forKey: .apiBase) ?? d.apiBase
+        userId = try c.decodeIfPresent(String.self, forKey: .userId) ?? d.userId
+        deviceId = try c.decodeIfPresent(String.self, forKey: .deviceId) ?? d.deviceId
+        autoCapture = try c.decodeIfPresent(Bool.self, forKey: .autoCapture) ?? d.autoCapture
+        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? d.launchAtLogin
+        retention = try c.decodeIfPresent(Retention.self, forKey: .retention) ?? d.retention
+        hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? d.hotkey
+        authToken = try c.decodeIfPresent(String.self, forKey: .authToken) ?? d.authToken
+        authGithubLogin = try c.decodeIfPresent(String.self, forKey: .authGithubLogin) ?? d.authGithubLogin
+        icloudSync = try c.decodeIfPresent(Bool.self, forKey: .icloudSync) ?? d.icloudSync
+        localSyncDecisionByUser = try c.decodeIfPresent([String: String].self, forKey: .localSyncDecisionByUser) ?? d.localSyncDecisionByUser
     }
 
     /// The sentinel that means "no real device id assigned yet".

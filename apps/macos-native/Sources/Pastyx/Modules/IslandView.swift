@@ -18,6 +18,13 @@ public final class IslandViewModel: ObservableObject {
     @Published public var showingSettings: Bool = false
     @Published public var config: AppConfig = AppConfig()
 
+    /// iCloud sync surface (icloud:status). Drives any UI/menu sync indicator.
+    @Published public var syncStatus: SyncStatus = SyncStatus()
+    /// Auth surface (auth:status). Reflects SSO sign-in state.
+    @Published public var authStatus: AuthStatus = AuthStatus(
+        remoteEnabled: false, authenticated: false, authConfigured: false, user: nil
+    )
+
     /// Bumped on every reveal so the SwiftUI side can replay the entrance
     /// animation and re-focus the search field deterministically.
     @Published public var revealToken: Int = 0

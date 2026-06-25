@@ -1,14 +1,22 @@
 import Foundation
 
-/// STUB. Codable config persisted as JSON in
-/// ~/Library/Application Support/Pastyx/config.json.
+/// Codable config persisted as JSON in
+/// ~/Library/Application Support/paste/config.json.
 ///
-/// Module agent: implement load() (read-on-miss writes defaults, re-normalizes
-/// on every read) and save() (normalize + pretty-print JSON).
+/// load(): reads the JSON from `url`; on miss (or unreadable/corrupt) writes
+/// normalized defaults. Re-normalizes (device-id sentinel) and rewrites if
+/// normalization changed anything, so a freshly-minted device id is persisted.
+///
+/// save(): normalizes + pretty-prints JSON to `url` (creating the parent dir).
+///
+/// Thread-affine to whoever owns it (AppDelegate is @MainActor); reads/writes are
+/// synchronous. This is the single source of truth the whole sync layer reads
+/// (the remote client reads identity live from here, the migrator writes the
+/// migrated config here, SSO persists the token here).
 public final class JSONConfigStore: ConfigStore {
     public private(set) var config: AppConfig
 
-    /// Path to the config JSON. Implementer should ensure the directory exists.
+    /// Path to the config JSON.
     public let url: URL
 
     public init() {
@@ -22,17 +30,39 @@ public final class JSONConfigStore: ConfigStore {
     }
 
     public func load() {
-        // TODO(module: Config): read JSON from `url`; on miss, write defaults.
-        // Re-normalize (device-id sentinel, retention fallback) and rewrite.
+        if let data = try? Data(contentsOf: url),
+           var decoded = try? JSONDecoder().decode(AppConfig.self, from: data) {
+            let before = decoded
+            decoded.normalize()
+            config = decoded
+            // Persist a normalization that changed something (e.g. a freshly
+            // generated device id) so it stays stable across launches.
+            if decoded != before {
+                writeToDisk(decoded)
+            }
+            return
+        }
+        // Miss / corrupt: write normalized defaults.
         var c = AppConfig()
         c.normalize()
         config = c
+        writeToDisk(c)
     }
 
     public func save(_ config: AppConfig) {
-        // TODO(module: Config): normalize + pretty-print JSON to `url`.
         var c = config
         c.normalize()
         self.config = c
+        writeToDisk(c)
+    }
+
+    /// Pretty-print + atomically write the config JSON, creating the parent dir.
+    private func writeToDisk(_ config: AppConfig) {
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(config) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 }

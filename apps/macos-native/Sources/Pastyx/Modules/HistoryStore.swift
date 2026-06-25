@@ -73,6 +73,16 @@ public final class HistoryStore: ClipStore, @unchecked Sendable {
         try? open()
     }
 
+    /// Open the store rooted at an explicit directory. Used by tests (and any
+    /// caller that needs an isolated store) so the on-disk layout is identical
+    /// to the default init but does not touch the user's real history dir.
+    public init(directory: URL) {
+        self.directory = directory
+        self.dbURL = directory.appendingPathComponent("local-history.sqlite")
+        self.imagesDir = directory.appendingPathComponent("images", isDirectory: true)
+        try? open()
+    }
+
     deinit {
         if let db { sqlite3_close(db) }
     }
@@ -486,6 +496,14 @@ public final class HistoryStore: ClipStore, @unchecked Sendable {
         return stored
     }
 
+    /// Test support: fetch a row by id REGARDLESS of its is_deleted flag (so a
+    /// tombstone can be observed). Returns nil when no row exists at all.
+    /// Distinct from get(id:), which excludes tombstones.
+    func rowIncludingDeleted(id: String) -> ClipItem? {
+        lock.lock(); defer { lock.unlock() }
+        return try? fetchRow(id: id)
+    }
+
     /// Lightweight row fetch (no image hydration) used internally for upserts.
     private func fetchRow(id: String) throws -> ClipItem? {
         guard let db else { return nil }
@@ -534,6 +552,14 @@ public final class HistoryStore: ClipStore, @unchecked Sendable {
     }
 
     public func prune(retention: Retention) throws {
+        try prune(retention: retention, maxClips: Self.maxLocalClips, tombstoneTtlMs: Self.tombstoneTtlMs)
+    }
+
+    /// Core prune with explicit cap + TTL (the public `prune` delegates with the
+    /// canonical 5000 cap and 30-day TTL). The extra parameters exist so tests can
+    /// drive the SAME SQL with a small cap / zero TTL — exactly as Electron's
+    /// compactDbFileStreaming accepts `{maxClips, tombstoneTtlMs}` overrides.
+    func prune(retention: Retention, maxClips: Int, tombstoneTtlMs: Int64) throws {
         lock.lock(); defer { lock.unlock() }
         guard let db else { throw PastyxError.store("db not open") }
 
@@ -552,7 +578,7 @@ public final class HistoryStore: ClipStore, @unchecked Sendable {
             ) < ?
             """
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_int64(stmt, 1, now - Self.tombstoneTtlMs)
+                sqlite3_bind_int64(stmt, 1, now - tombstoneTtlMs)
                 sqlite3_step(stmt)
             }
             sqlite3_finalize(stmt)
@@ -583,7 +609,7 @@ public final class HistoryStore: ClipStore, @unchecked Sendable {
             )
             """
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_int64(stmt, 1, Int64(Self.maxLocalClips))
+                sqlite3_bind_int64(stmt, 1, Int64(maxClips))
                 sqlite3_step(stmt)
             }
             sqlite3_finalize(stmt)

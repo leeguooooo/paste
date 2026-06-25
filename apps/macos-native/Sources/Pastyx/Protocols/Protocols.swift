@@ -137,6 +137,8 @@ public protocol StatusItemControlling: AnyObject {
     func install()
     /// Update the hotkey status label shown (disabled) in the menu.
     func updateHotkeyLabel(_ accelerator: String)
+    /// Update the sync status line shown (disabled) in the menu.
+    func updateSyncLabel(_ text: String)
 }
 
 // MARK: - ConfigStore (Config.swift)

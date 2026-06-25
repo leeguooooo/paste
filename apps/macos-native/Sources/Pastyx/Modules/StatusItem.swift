@@ -19,6 +19,8 @@ public final class StatusItemController: NSObject, StatusItemControlling {
     private var hotkeyMenuItem: NSMenuItem?
     /// The Accessibility status line; reflects current AX-trust state.
     private var accessibilityMenuItem: NSMenuItem?
+    /// The Sync status line; reflects iCloud/remote sync state.
+    private var syncMenuItem: NSMenuItem?
 
     public override init() {
         super.init()
@@ -47,6 +49,10 @@ public final class StatusItemController: NSObject, StatusItemControlling {
 
     public func updateHotkeyLabel(_ accelerator: String) {
         hotkeyMenuItem?.title = "Hotkey: \(AcceleratorFormatter.symbolic(accelerator))"
+    }
+
+    public func updateSyncLabel(_ text: String) {
+        syncMenuItem?.title = text
     }
 
     // MARK: - Menu construction
@@ -98,6 +104,12 @@ public final class StatusItemController: NSObject, StatusItemControlling {
         accessibility.target = self
         menu.addItem(accessibility)
         self.accessibilityMenuItem = accessibility
+
+        // Disabled status line for the sync subsystem (iCloud / remote).
+        let sync = NSMenuItem(title: "Sync: —", action: nil, keyEquivalent: "")
+        sync.isEnabled = false
+        menu.addItem(sync)
+        self.syncMenuItem = sync
 
         menu.addItem(.separator())
 

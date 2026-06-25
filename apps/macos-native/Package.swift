@@ -17,6 +17,18 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("ApplicationServices")
             ]
+        ),
+        .testTarget(
+            name: "PastyxTests",
+            dependencies: ["Pastyx"],
+            path: "Tests/PastyxTests",
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+                .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("ApplicationServices")
+            ]
         )
     ]
 )
