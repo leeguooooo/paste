@@ -6,7 +6,11 @@ routes = [
   # Allow the Pages frontend (paste-web.misonote.com) to call the API via same-origin `/v1/*`.
   { pattern = "paste-web.misonote.com/v1/*", zone_name = "misonote.com" },
   # Also allow the web frontend hosted on paste.misonote.com to call same-origin `/v1/*`.
-  { pattern = "paste.misonote.com/v1/*", zone_name = "misonote.com" }
+  { pattern = "paste.misonote.com/v1/*", zone_name = "misonote.com" },
+  # leeguoo.com dual-domain (misonote.com stays live during the migration).
+  { pattern = "pasteapi.leeguoo.com", custom_domain = true },
+  { pattern = "paste-web.leeguoo.com/v1/*", zone_name = "leeguoo.com" },
+  { pattern = "paste.leeguoo.com/v1/*", zone_name = "leeguoo.com" }
 ]
 
 [vars]
