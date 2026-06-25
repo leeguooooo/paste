@@ -32,12 +32,13 @@ public final class PanelController: NSObject, PanelControlling, NSWindowDelegate
     private let pasteService: () -> PasteService?
     private var panel: NonActivatingPanel?
 
-    // Geometry constants. Full-width island: span the display's work area minus a
-    // small side inset so the rounded glass corners + shadow still breathe at the
-    // screen edges, instead of capping at a centered fixed width.
-    public static let sideMargin: CGFloat = 12
+    // Geometry constants. Full-bleed bottom shelf: the island spans the entire
+    // work-area width and sits flush against the left/right/bottom edges, so only
+    // its top corners are rounded (handled in IslandView). This is what "fill the
+    // screen horizontally" means — no side gaps.
+    public static let sideMargin: CGFloat = 0
     public static let height: CGFloat = 440
-    public static let bottomMargin: CGFloat = 16
+    public static let bottomMargin: CGFloat = 0
     // Initial content size before fitToDisplay resizes to the actual display.
     public static let maxWidth: CGFloat = 1440
 

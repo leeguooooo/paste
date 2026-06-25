@@ -228,14 +228,25 @@ public struct IslandView: View {
         // panel, so over a light backdrop the white text becomes unreadable. A
         // solid dark scrim under the whole island keeps contrast constant on any
         // background; the glass on the search pill + cards still reads on top.
+        //
+        // Full-bleed bottom shelf: only the TOP corners are rounded — the left,
+        // right, and bottom edges sit flush against the screen, so rounding them
+        // would just leak the backdrop through the gaps.
         .background {
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(Color(.sRGB, red: 18/255, green: 18/255, blue: 22/255, opacity: 0.82))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+            UnevenRoundedRectangle(
+                topLeadingRadius: 22, bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0, topTrailingRadius: 22, style: .continuous
+            )
+            .fill(Color(.sRGB, red: 18/255, green: 18/255, blue: 22/255, opacity: 0.86))
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 22, bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0, topTrailingRadius: 22, style: .continuous
                 )
+                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+            )
         }
+        .ignoresSafeArea()
         // Top specular band across the island (App.tsx .app-shell::before).
         .overlay(alignment: .top) {
             LinearGradient(
@@ -353,6 +364,17 @@ private struct HistoryShelf: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Soft-fade the leading/trailing edges so cards entering/leaving the
+            // viewport dissolve instead of being hard-clipped at the screen edge.
+            .mask(
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 28)
+                    Rectangle().fill(.black)
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 28)
+                }
+            )
         }
     }
 
