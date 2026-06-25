@@ -359,10 +359,14 @@ public final class SSOAuthService: AuthService {
             if githubId == nil, let n = u["githubId"] as? NSNumber, n.intValue != 0 {
                 githubId = n.stringValue
             }
+            let email = (u["email"] as? String)?.trimmingCharacters(in: .whitespaces)
+            let name = (u["name"] as? String)?.trimmingCharacters(in: .whitespaces)
             if !userId.isEmpty {
                 user = AuthUser(userId: userId,
                                 githubLogin: (login?.isEmpty == false) ? login : nil,
-                                githubId: githubId)
+                                githubId: githubId,
+                                email: (email?.isEmpty == false) ? email : nil,
+                                name: (name?.isEmpty == false) ? name : nil)
             }
         }
         return AuthMe(authenticated: authenticated, authConfigured: authConfigured, user: user)

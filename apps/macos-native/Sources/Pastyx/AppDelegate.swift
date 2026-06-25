@@ -104,6 +104,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         viewModel.onHide = { [weak self] in self?.panel.hide() }
         viewModel.onSaveConfig = { [weak self] cfg in self?.saveConfig(cfg) }
+        viewModel.onSignIn = { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.viewModel.authBusy = true
+                _ = try? await self.auth.startSignIn()
+                self.viewModel.authStatus = await self.auth.status()
+                self.viewModel.config = self.configStore.config
+                self.viewModel.authBusy = false
+                self.viewModel.onRefresh?()
+                self.refreshSyncStatus()
+            }
+        }
+        viewModel.onSignOut = { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.viewModel.authBusy = true
+                _ = await self.auth.logout()
+                self.viewModel.authStatus = await self.auth.status()
+                self.viewModel.config = self.configStore.config
+                self.viewModel.authBusy = false
+                self.viewModel.onRefresh?()
+            }
+        }
 
         // 6. Hotkey -> toggle panel.
         hotKey.onTrigger = { [weak self] in

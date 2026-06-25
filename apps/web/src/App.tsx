@@ -48,6 +48,8 @@ type AuthUser = {
   userId: string;
   githubLogin: string;
   githubId: number;
+  email?: string;
+  name?: string;
 };
 type AuthMeData = {
   authenticated: boolean;
@@ -362,7 +364,7 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const inflightImagePrefetchRef = useRef(new Set<string>());
   const effectiveUserId = authUser?.userId || userId;
-  const authDisplayName = (authUser?.githubLogin || authUser?.userId || "").trim();
+  const authDisplayName = (authUser?.name || authUser?.email || authUser?.githubLogin || authUser?.userId || "").trim();
   const effectiveDeviceId = deviceId.trim() || "web_browser";
   const ssoEnabled = Boolean(DEFAULT_SSO_ISSUER && DEFAULT_SSO_CLIENT_ID);
 

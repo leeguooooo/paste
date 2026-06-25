@@ -25,6 +25,9 @@ public final class IslandViewModel: ObservableObject {
         remoteEnabled: false, authenticated: false, authConfigured: false, user: nil
     )
 
+    /// Set while an SSO sign-in / sign-out is in flight (disables the button).
+    @Published public var authBusy: Bool = false
+
     /// Bumped on every reveal so the SwiftUI side can replay the entrance
     /// animation and re-focus the search field deterministically.
     @Published public var revealToken: Int = 0
@@ -36,6 +39,8 @@ public final class IslandViewModel: ObservableObject {
     public var onRefresh: (() -> Void)?
     public var onSaveConfig: ((AppConfig) -> Void)?
     public var onHide: (() -> Void)?
+    public var onSignIn: (() -> Void)?
+    public var onSignOut: (() -> Void)?
 
     public init() {}
 
@@ -732,7 +737,8 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 18) {
+                    accountSection
                     systemSection
                 }
             }
@@ -759,6 +765,45 @@ public struct SettingsView: View {
                 .foregroundStyle(Color.accentColor)
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
+        }
+    }
+
+    private var accountSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionTitle("ACCOUNT")
+            if viewModel.authStatus.authenticated, let user = viewModel.authStatus.user {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Signed in")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.45))
+                        Text(user.displayName)
+                            .font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button("Sign out") { viewModel.onSignOut?() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(viewModel.authBusy)
+                }
+            } else {
+                Button {
+                    viewModel.onSignIn?()
+                } label: {
+                    Text(viewModel.authBusy ? "Opening browser…" : "Sign in to sync")
+                        .font(.system(size: 14, weight: .heavy))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color(hex: "#ff5447"), in: RoundedRectangle(cornerRadius: 12))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.authBusy)
+            }
         }
     }
 

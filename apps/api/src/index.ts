@@ -104,6 +104,7 @@ type SsoUserInfo = {
   tid?: string;
   gaid?: string;
   email?: string;
+  name?: string;
 };
 
 type GithubUser = {
@@ -282,7 +283,8 @@ const readSsoIdentity = async (request: Request, env: Env): Promise<SsoIdentityR
       sub,
       tid: typeof payload?.tid === "string" ? payload.tid : undefined,
       gaid: typeof payload?.gaid === "string" ? payload.gaid : undefined,
-      email: typeof payload?.email === "string" ? payload.email : undefined
+      email: typeof payload?.email === "string" ? payload.email : undefined,
+      name: typeof payload?.name === "string" ? payload.name : undefined
     }
   };
 };
@@ -2175,7 +2177,9 @@ const handleAuthMe = async (request: Request, env: Env): Promise<Response> => {
         user: {
           userId: sso.user.sub,
           githubLogin: sso.user.gaid ?? sso.user.sub,
-          githubId: 0
+          githubId: 0,
+          email: sso.user.email,
+          name: sso.user.name
         },
         headerIdentityEnabled: authMode !== "sso" && allowHeaderIdentity(env),
         authConfigured: true,

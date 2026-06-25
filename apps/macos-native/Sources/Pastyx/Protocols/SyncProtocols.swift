@@ -277,11 +277,23 @@ public struct AuthUser: Codable, Sendable, Equatable {
     public var userId: String
     public var githubLogin: String?
     public var githubId: String?
+    public var email: String?
+    public var name: String?
 
-    public init(userId: String, githubLogin: String? = nil, githubId: String? = nil) {
+    public init(userId: String, githubLogin: String? = nil, githubId: String? = nil, email: String? = nil, name: String? = nil) {
         self.userId = userId
         self.githubLogin = githubLogin
         self.githubId = githubId
+        self.email = email
+        self.name = name
+    }
+
+    /// Friendly label for UI: real name → email → github login → short id.
+    public var displayName: String {
+        if let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty { return name }
+        if let email = email?.trimmingCharacters(in: .whitespaces), !email.isEmpty { return email }
+        if let login = githubLogin?.trimmingCharacters(in: .whitespaces), !login.isEmpty, login != userId { return login }
+        return String(userId.prefix(8))
     }
 }
 
