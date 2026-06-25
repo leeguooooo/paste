@@ -36,6 +36,14 @@ mkdir -p "$MACOS_DIR" "$RES_DIR"
 # CFBundleExecutable must match this file name.
 cp "$EXE" "$MACOS_DIR/$APP_NAME"
 
+# App icon (built from assets/appicon-rounded-1024.png via iconutil).
+ICON_SRC="$ROOT/assets/AppIcon.icns"
+ICON_DECL=""
+if [[ -f "$ICON_SRC" ]]; then
+  cp "$ICON_SRC" "$RES_DIR/AppIcon.icns"
+  ICON_DECL=$'  <key>CFBundleIconFile</key>\n  <string>AppIcon</string>'
+fi
+
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -47,6 +55,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleExecutable</key>
   <string>$APP_NAME</string>
+${ICON_DECL}
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
   <key>CFBundlePackageType</key>

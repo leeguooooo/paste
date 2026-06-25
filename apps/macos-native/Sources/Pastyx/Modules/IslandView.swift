@@ -224,6 +224,18 @@ public struct IslandView: View {
         .padding(.top, 14)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Guaranteed dark substrate. Liquid Glass follows whatever is behind the
+        // panel, so over a light backdrop the white text becomes unreadable. A
+        // solid dark scrim under the whole island keeps contrast constant on any
+        // background; the glass on the search pill + cards still reads on top.
+        .background {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(Color(.sRGB, red: 18/255, green: 18/255, blue: 22/255, opacity: 0.82))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+                )
+        }
         // Top specular band across the island (App.tsx .app-shell::before).
         .overlay(alignment: .top) {
             LinearGradient(
@@ -380,7 +392,7 @@ private struct ClipCard: View {
         .background {
             // Dark glass slab; native Liquid Glass tinted toward the card bg.
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.sRGB, red: 30/255, green: 30/255, blue: 38/255, opacity: 0.55))
+                .fill(Color(.sRGB, red: 38/255, green: 38/255, blue: 46/255, opacity: 0.92))
         }
         // Diagonal specular gloss (.clip-card::after).
         .overlay {

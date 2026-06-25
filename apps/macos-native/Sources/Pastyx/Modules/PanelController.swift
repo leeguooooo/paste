@@ -32,11 +32,14 @@ public final class PanelController: NSObject, PanelControlling, NSWindowDelegate
     private let pasteService: () -> PasteService?
     private var panel: NonActivatingPanel?
 
-    // Geometry constants (getMainWindowBounds, main.cjs:283-286, 1867).
-    public static let maxWidth: CGFloat = 1040
-    public static let widthRatio: CGFloat = 0.86
-    public static let height: CGFloat = 420
+    // Geometry constants. Full-width island: span the display's work area minus a
+    // small side inset so the rounded glass corners + shadow still breathe at the
+    // screen edges, instead of capping at a centered fixed width.
+    public static let sideMargin: CGFloat = 12
+    public static let height: CGFloat = 440
     public static let bottomMargin: CGFloat = 16
+    // Initial content size before fitToDisplay resizes to the actual display.
+    public static let maxWidth: CGFloat = 1440
 
     /// Post-show grace window: while now < this timestamp, resignKey does NOT
     /// hide the panel (mirrors `suppressBlurHideUntil = now + 900` in main.cjs:1920).
@@ -112,6 +115,10 @@ public final class PanelController: NSObject, PanelControlling, NSWindowDelegate
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        // Force the dark HUD appearance so Liquid Glass always renders its dark
+        // variant. Without this the glass follows whatever is behind the panel —
+        // over a light webpage it turns pale and the white text vanishes.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovable = false
@@ -125,6 +132,7 @@ public final class PanelController: NSObject, PanelControlling, NSWindowDelegate
         let host = NSHostingView(rootView: IslandView(viewModel: viewModel))
         host.frame = panel.contentView?.bounds ?? .zero
         host.autoresizingMask = [.width, .height]
+        host.appearance = NSAppearance(named: .darkAqua)
         // Let the glass corners show through the hosting layer.
         host.wantsLayer = true
         host.layer?.backgroundColor = NSColor.clear.cgColor
@@ -142,9 +150,10 @@ public final class PanelController: NSObject, PanelControlling, NSWindowDelegate
     /// NOTE: AppKit uses a bottom-left origin, so "bottom-anchored" places the
     /// panel `bottomMargin` points above the work-area minY (above the Dock).
     static func bounds(in workArea: NSRect) -> NSRect {
-        let width = min(maxWidth, (workArea.width * widthRatio).rounded(.down))
+        // Stretch the full work-area width (minus a small side inset).
+        let width = (workArea.width - sideMargin * 2).rounded(.down)
         let height = min(self.height, workArea.height - bottomMargin * 2)
-        let x = workArea.minX + ((workArea.width - width) / 2).rounded(.down)
+        let x = workArea.minX + sideMargin
         let y = workArea.minY + bottomMargin
         return NSRect(x: x, y: y, width: width, height: height)
     }
