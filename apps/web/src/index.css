@@ -2,11 +2,16 @@
   --card-width: 280px;
   --card-height: 200px;
   --gap: 28px;
-  --primary: var(--lg-color-primary-600);
-  
-  --accent-blue: var(--lg-color-primary-600);
+  /* coral brand primary, unified with the misonote/leeguoo account family
+     (the published design-tokens still ship Google blue; override here) */
+  --lg-color-primary-500: #ff5447;
+  --lg-color-primary-600: #ff5447;
+  --lg-color-primary-700: #ff3a2b;
+  --primary: #ff5447;
+
+  --accent-blue: #3f6fe0;
   --accent-orange: var(--lg-color-warning);
-  --accent-purple: var(--lg-color-primary-500);
+  --accent-purple: #8b5cf6;
   --accent-green: var(--lg-color-success);
   --accent-pink: var(--lg-color-danger);
   --accent-gray: var(--lg-color-neutral-500);
@@ -665,6 +670,42 @@ body {
 .settings-auth-error {
   font-size: 12px;
   color: color-mix(in srgb, var(--lg-color-danger-500) 84%, var(--lg-color-neutral-50) 16%);
+  margin-top: 10px;
+}
+
+/* simplified account row — login is all the user needs to see */
+.settings-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-account-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-account-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--card-muted);
+}
+
+.settings-account-user {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-save-block {
+  width: 100%;
 }
 
 .settings-row input[type="text"] {

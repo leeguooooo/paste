@@ -942,63 +942,43 @@ export default function App() {
               <button className="icon-btn" onClick={() => setShowSettings(false)}><X size={24} /></button>
             </div>
             <div className="settings-section">
-              <div className="settings-row">
-                <label>Cloudflare SSO Account</label>
-                {authUser ? (
-                  <div className="settings-auth-meta">
-                    <span className="settings-auth-user">Signed in as {authDisplayName}</span>
-                    <button
-                      className="btn-save btn-save-dark btn-save-inline"
-                      type="button"
-                      onClick={() => void logoutAuth()}
-                    >
-                      Sign out
-                    </button>
+              {authUser ? (
+                <div className="settings-account">
+                  <div className="settings-account-meta">
+                    <span className="settings-account-label">Signed in</span>
+                    <span className="settings-account-user">{authDisplayName}</span>
                   </div>
-                ) : (
                   <button
-                    className="btn-save btn-save-outline btn-save-inline"
+                    className="btn-save btn-save-dark btn-save-inline"
                     type="button"
-                    onClick={signIn}
-                    disabled={authLoading || !authConfigured}
+                    onClick={() => void logoutAuth()}
                   >
-                    {!authConfigured
-                      ? "SSO not configured"
-                      : authLoading
-                        ? "Checking..."
-                        : "Sign in with Cloudflare SSO"}
+                    Sign out
                   </button>
-                )}
-                {ssoError ? (
-                  <div className="settings-auth-error" role="alert">{ssoError}</div>
-                ) : null}
-              </div>
-              <div className="settings-row">
-                <label>Account User ID</label>
-                <input
-                  type="text"
-                  value={authUser ? effectiveUserId : "Sign in required"}
-                  disabled
-                />
-              </div>
-              <div className="settings-row">
-                <label>Device ID</label>
-                <input type="text" value={deviceId} onChange={e => setDeviceId(e.target.value)} />
-              </div>
-              <div className="settings-row">
-                <label>Regenerate Device</label>
+                </div>
+              ) : (
                 <button
-                  className="btn-save btn-save-dark btn-save-inline"
+                  className="btn-save btn-save-primary btn-save-block"
                   type="button"
-                  onClick={resetDeviceId}
+                  onClick={signIn}
+                  disabled={authLoading || !authConfigured}
                 >
-                  New Device ID
+                  {!authConfigured
+                    ? "Sync unavailable"
+                    : authLoading
+                      ? "Checking…"
+                      : "Sign in to sync"}
                 </button>
-              </div>
+              )}
+              {ssoError ? (
+                <div className="settings-auth-error" role="alert">{ssoError}</div>
+              ) : null}
             </div>
-            <button className="btn-save btn-save-primary" onClick={saveSettings}>
-              Save and Sync
-            </button>
+            {authUser ? (
+              <button className="btn-save btn-save-primary" onClick={saveSettings}>
+                Sync now
+              </button>
+            ) : null}
           </div>
         </div>
       )}
