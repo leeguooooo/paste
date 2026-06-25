@@ -9,6 +9,10 @@ interface Env {
   AUTH_MODE?: string;
   SSO_ISSUER?: string;
   SSO_CLIENT_ID?: string;
+  // Extra client_ids allowed to exchange/refresh through /v1/auth/sso/token
+  // (comma-separated). The native macOS app exchanges with its own public PKCE
+  // client, so the broker must accept it in addition to the default web client.
+  SSO_ALLOWED_CLIENT_IDS?: string;
   SSO_ENTITLEMENT_TENANT_ID?: string;
   SSO_REQUIRED_ENTITLEMENT_KEY?: string;
   GITHUB_CLIENT_ID?: string;
@@ -2067,6 +2071,7 @@ const handleAuthSsoToken = async (request: Request, env: Env): Promise<Response>
     codeVerifier?: string;
     redirectUri?: string;
     refreshToken?: string;
+    clientId?: string;
   }>(request);
   if (parsed instanceof Response) {
     return parsed;
@@ -2077,9 +2082,27 @@ const handleAuthSsoToken = async (request: Request, env: Env): Promise<Response>
     return fail("INVALID_GRANT_TYPE", "grantType must be authorization_code or refresh_token", 400);
   }
 
+  // The PKCE authorization code is bound to the client_id that started the flow.
+  // Default to the web client, but let a registered client (e.g. the native
+  // macOS app's misonote-paste-macos) exchange with its own id — validated
+  // against an allowlist so the broker can't be pointed at arbitrary clients.
+  const defaultClientId = getSsoClientId(env);
+  const allowedClientIds = new Set<string>([
+    defaultClientId,
+    ...String(env.SSO_ALLOWED_CLIENT_IDS ?? "misonote-paste-macos")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ]);
+  const requestedClientId = String(parsed.clientId ?? "").trim();
+  const clientId = requestedClientId ? (allowedClientIds.has(requestedClientId) ? requestedClientId : "") : defaultClientId;
+  if (!clientId) {
+    return fail("INVALID_CLIENT_ID", "clientId is not allowed", 400);
+  }
+
   const form = new URLSearchParams();
   form.set("grant_type", grantType);
-  form.set("client_id", getSsoClientId(env));
+  form.set("client_id", clientId);
 
   if (grantType === "authorization_code") {
     const code = String(parsed.code ?? "").trim();

@@ -30,7 +30,10 @@ public final class SSOAuthService: AuthService {
         return (v?.isEmpty == false) ? v! : fallback
     }
     private var issuer: String {
-        var s = Self.env("PASTE_SSO_ISSUER", "https://account.misonote.com")
+        // Must match the issuer the paste API trusts (SSO_ISSUER in the API's
+        // wrangler config) — otherwise the authorization code is signed by a
+        // different issuer than the one the broker exchanges/verifies against.
+        var s = Self.env("PASTE_SSO_ISSUER", "https://cloudflare-sso.pages.dev")
         while s.hasSuffix("/") { s.removeLast() }
         return s
     }
@@ -169,6 +172,9 @@ public final class SSOAuthService: AuthService {
             "code": callback.code,
             "codeVerifier": verifier,
             "redirectUri": callback.redirectUri,
+            // The code is bound to THIS client; tell the broker to exchange with
+            // it instead of defaulting to the web client.
+            "clientId": clientId,
         ]
         let exchange = await postJSON(path: "/auth/sso/token", body: exchangeBody)
         guard exchange.ok else {
