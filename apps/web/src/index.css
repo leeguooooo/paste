@@ -158,6 +158,53 @@ body {
   border-color: color-mix(in srgb, var(--lg-color-neutral-50) 42%, transparent);
 }
 
+/* Prominent sign-in button in the top nav (opens the SSO popup). */
+.marketing-links .nav-signin {
+  font: inherit;
+  font-weight: 700;
+  color: #fff;
+  background: #ff5447;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: var(--lg-shadow-md);
+  transition: background 0.18s ease, transform 0.12s ease;
+}
+.marketing-links .nav-signin:hover { background: #ff3a2b; transform: translateY(-1px); }
+.marketing-links .nav-signin:disabled { opacity: 0.6; cursor: default; transform: none; }
+
+/* Signed-in chip: name + sign-out. */
+.marketing-links .nav-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.marketing-links .nav-account-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-on-dark);
+  font-weight: 700;
+}
+.marketing-links .nav-signout {
+  font: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--ink-on-dark-soft);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--lg-color-neutral-50) 24%, transparent);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+.marketing-links .nav-signout:hover {
+  color: var(--ink-on-dark);
+  border-color: color-mix(in srgb, var(--lg-color-neutral-50) 42%, transparent);
+}
+
 .marketing-hero {
   width: min(1120px, calc(100vw - 48px));
   margin: 0 auto;

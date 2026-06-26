@@ -39,8 +39,8 @@ const API_BASE = normalizePath(import.meta.env.VITE_API_BASE || "/v1", "/v1").re
 const PORTAL_HOME_URL = (() => {
   const configured = String(import.meta.env.VITE_PORTAL_HOME_URL || "").trim();
   if (configured) return configured;
-  if (typeof window !== "undefined" && window.location.hostname === "app.misonote.com") return "/";
-  return "https://app.misonote.com/";
+  if (typeof window !== "undefined" && window.location.hostname === "app.leeguoo.com") return "/";
+  return "https://app.leeguoo.com/";
 })();
 
 type ClipCardItem = ClipItem & { __demo?: boolean };
@@ -298,8 +298,8 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       __demo: true,
       id: "demo:text",
       type: "text",
-      summary: "欢迎使用 Pastyx",
-      content: "欢迎使用 Pastyx。点击任意卡片可复制示例内容。",
+      summary: "欢迎使用 paste",
+      content: "欢迎使用 paste。点击任意卡片可复制示例内容。",
       createdAt: now - 9_000,
     },
     {
@@ -318,7 +318,7 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       id: "demo:code",
       type: "code",
       summary: "代码片段",
-      content: "curl -sS https://pasteapi.misonote.com/v1/health",
+      content: "curl -sS https://pasteapi.leeguoo.com/v1/health",
       createdAt: now - 56_000,
     },
     {
@@ -327,8 +327,8 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       id: "demo:html",
       type: "html",
       summary: "HTML 示例",
-      content: "<strong>Pastyx</strong> is local-first.",
-      contentHtml: "<strong>Pastyx</strong> is local-first.",
+      content: "<strong>paste</strong> is local-first.",
+      contentHtml: "<strong>paste</strong> is local-first.",
       createdAt: now - 120_000,
     },
     {
@@ -337,7 +337,7 @@ const makeDemoClips = (userId: string, deviceId: string): ClipCardItem[] => {
       id: "demo:image",
       type: "image",
       summary: "图片示例",
-      content: "Pastyx icon",
+      content: "paste icon",
       imageUrl: resolveAssetPath("icon-512.svg"),
       createdAt: now - 240_000,
     },
@@ -855,19 +855,31 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="marketing-nav">
-        <a className="brand" href={BASE_URL} aria-label="Pastyx home">
-          <span className="brand-mark" aria-hidden="true">P</span>
-          <span className="brand-name">Pastyx</span>
+        <a className="brand" href={BASE_URL} aria-label="paste home">
+          <span className="brand-mark" aria-hidden="true">p</span>
+          <span className="brand-name">paste</span>
         </a>
         <nav className="marketing-links" aria-label="Primary">
-          {authUser ? (
-            <span className="auth-login">{authDisplayName}</span>
-          ) : null}
           <a className="nav-back" href={PORTAL_HOME_URL}>Back to App Center</a>
           <a href="https://github.com/leeguooooo/paste" target="_blank" rel="noopener noreferrer">Source Code</a>
           <a className="nav-cta" href="https://github.com/leeguooooo/paste/releases/latest" target="_blank" rel="noopener noreferrer">
             Download for macOS
           </a>
+          {authUser ? (
+            <div className="nav-account">
+              <span className="nav-account-name" title={authDisplayName}>{authDisplayName}</span>
+              <button className="nav-signout" type="button" onClick={() => void logoutAuth()}>Sign out</button>
+            </div>
+          ) : authConfigured ? (
+            <button
+              className="nav-signin"
+              type="button"
+              onClick={signIn}
+              disabled={authLoading}
+            >
+              {authLoading ? "Checking…" : "Sign in"}
+            </button>
+          ) : null}
         </nav>
       </header>
 
@@ -906,7 +918,7 @@ export default function App() {
                   <span className="dot dot-red" />
                   <span className="dot dot-yellow" />
                   <span className="dot dot-green" />
-                  <span className="device-browser-title">app.misonote.com/paste</span>
+                  <span className="device-browser-title">paste.leeguoo.com</span>
                 </div>
                 <img
                   src={resolveAssetPath("product/shots/web-live-1920x1080.png")}
