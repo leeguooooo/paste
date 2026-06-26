@@ -314,6 +314,7 @@ private struct HistoryShelf: View {
         VStack(spacing: 12) {
             toolbar
             cardScroller
+            if !viewModel.clips.isEmpty { hintBar }
         }
         .offset(y: (entered || viewModel.disableEntrance) ? 0 : 24)
         .opacity((entered || viewModel.disableEntrance) ? 1 : 0)
@@ -328,6 +329,20 @@ private struct HistoryShelf: View {
             withAnimation(.timingCurve(0.21, 1.02, 0.55, 1, duration: 0.22)) { entered = true }
             searchFocused = true
         }
+    }
+
+    // Raycast-style discreet shortcut hints along the bottom.
+    private var hintBar: some View {
+        HStack(spacing: 16) {
+            KeyHint(cap: "\u{21A9}", label: "paste")
+            KeyHint(cap: "\u{2318}C", label: "copy")
+            KeyHint(cap: "\u{232B}", label: "delete")
+            KeyHint(cap: "\u{2190}\u{2192}", label: "navigate")
+            Spacer()
+            KeyHint(cap: "\u{2318},", label: "settings")
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 2)
     }
 
     private var toolbar: some View {
@@ -712,6 +727,29 @@ private struct ClipCard: View {
             Rectangle().fill(.white.opacity(0.07)).frame(height: 1)
         }
         .animation(.easeOut(duration: 0.2), value: selected)
+    }
+}
+
+// MARK: - Keyboard hint
+
+/// A discreet "⌘C copy" style shortcut hint: a small text keycap + a dim label.
+private struct KeyHint: View {
+    let cap: String
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(cap)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(minWidth: 16, minHeight: 16)
+                .padding(.horizontal, 4)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+            Text(label)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.38))
+        }
     }
 }
 
