@@ -2255,6 +2255,102 @@ const getTagIdFromPath = (path: string): string | null => {
   return match ? decodeURIComponent(match[1]) : null;
 };
 
+// ── Anonymous quick-share ("快传") ──────────────────────────────────────────
+const SHARE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const SHARE_MAX_CONTENT = 100_000; // 100 KB text/html — caps abuse on a no-auth write
+const SHARE_MAX_IMAGE = 700_000; // ~700 KB image data URL
+// Unambiguous alphabet (no 0/o/1/l/i) for easy phone typing.
+const SHARE_CODE_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
+
+const makeShareCode = (len = 8): string => {
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  let s = "";
+  for (let i = 0; i < len; i++) s += SHARE_CODE_ALPHABET[bytes[i] % SHARE_CODE_ALPHABET.length];
+  return s;
+};
+
+const getShareCodeFromPath = (path: string): string | null => {
+  const match = path.match(/^\/v1\/share\/([0-9a-z]{4,16})$/);
+  return match ? match[1] : null;
+};
+
+const handleCreateShare = async (request: Request, db: D1Database): Promise<Response> => {
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return fail("BAD_REQUEST", "Invalid JSON body.", 400);
+  }
+
+  const rawType = String(body.type ?? "text");
+  const type = CLIP_TYPES.has(rawType as ClipType) ? rawType : "text";
+  const content = body.content != null ? String(body.content) : null;
+  const contentHtml = body.contentHtml != null ? String(body.contentHtml) : null;
+  const sourceUrl = body.sourceUrl != null ? String(body.sourceUrl) : null;
+  const imageDataUrl = body.imageDataUrl != null ? String(body.imageDataUrl) : null;
+
+  if (!content && !imageDataUrl) {
+    return fail("EMPTY", "Nothing to share.", 400);
+  }
+  if ((content?.length ?? 0) > SHARE_MAX_CONTENT || (contentHtml?.length ?? 0) > SHARE_MAX_CONTENT) {
+    return fail("TOO_LARGE", "Content is too large to share.", 413);
+  }
+  if (imageDataUrl) {
+    if (!imageDataUrl.startsWith("data:image/")) {
+      return fail("BAD_IMAGE", "Invalid image data.", 400);
+    }
+    if (imageDataUrl.length > SHARE_MAX_IMAGE) {
+      return fail("TOO_LARGE", "Image is too large to share.", 413);
+    }
+  }
+
+  const now = Date.now();
+  const expiresAt = now + SHARE_TTL_MS;
+  let code = makeShareCode();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      await db
+        .prepare(
+          `INSERT INTO shares (code, type, content, content_html, source_url, image_data_url, created_at, expires_at, views)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)`
+        )
+        .bind(code, type, content, contentHtml, sourceUrl, imageDataUrl, now, expiresAt)
+        .run();
+      return ok({ code, expiresAt, ttlMs: SHARE_TTL_MS });
+    } catch {
+      code = makeShareCode(); // primary-key collision — retry with a new code
+    }
+  }
+  return fail("RETRY", "Could not allocate a share code.", 500);
+};
+
+const handleGetShare = async (db: D1Database, code: string): Promise<Response> => {
+  const row = await db
+    .prepare("SELECT * FROM shares WHERE code = ?1")
+    .bind(code)
+    .first<Record<string, unknown>>();
+  if (!row) {
+    return fail("NOT_FOUND", "This share does not exist or has expired.", 404);
+  }
+  if (Number(row.expires_at) < Date.now()) {
+    await db.prepare("DELETE FROM shares WHERE code = ?1").bind(code).run();
+    return fail("EXPIRED", "This share has expired.", 404);
+  }
+  await db.prepare("UPDATE shares SET views = views + 1 WHERE code = ?1").bind(code).run();
+  return ok({
+    code: row.code,
+    type: row.type,
+    content: row.content ?? null,
+    contentHtml: row.content_html ?? null,
+    sourceUrl: row.source_url ?? null,
+    imageDataUrl: row.image_data_url ?? null,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    views: Number(row.views ?? 0) + 1
+  });
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -2307,6 +2403,17 @@ export default {
 
       if (request.method === "POST" && path === "/v1/auth/logout") {
         return handleAuthLogout(request);
+      }
+
+      // Anonymous quick-share — no auth on purpose (size-capped + TTL).
+      if (request.method === "POST" && path === "/v1/share") {
+        return handleCreateShare(request, db);
+      }
+      if (request.method === "GET") {
+        const shareCode = getShareCodeFromPath(path);
+        if (shareCode) {
+          return handleGetShare(db, shareCode);
+        }
       }
 
       // Public image streaming endpoint (no-auth phase).
