@@ -524,17 +524,29 @@ private struct ClipCard: View {
     private var preview: some View {
         Group {
             if let image = ClipPresentation.previewImage(clip) {
+                // Full-bleed thumbnail with a faint inner edge so it reads as media.
                 Image(nsImage: image)
                     .resizable()
+                    .interpolation(.high)
                     .aspectRatio(contentMode: .fill)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+                    .overlay {
+                        LinearGradient(
+                            colors: [.black.opacity(0.0), .black.opacity(0.22)],
+                            startPoint: .center, endPoint: .bottom
+                        )
+                        .allowsHitTesting(false)
+                    }
+            } else if clip.type == .link, let src = clip.sourceURL,
+                      !src.trimmingCharacters(in: .whitespaces).isEmpty {
+                linkPreview(src)
+            } else if clip.type == .code {
+                codePreview
             } else {
                 Text(ClipPresentation.previewText(clip))
-                    .font(clip.type == .code
-                          ? .system(size: 12.5, weight: .regular, design: .monospaced)
-                          : .system(size: 13.5, weight: .regular))
-                    .lineSpacing(clip.type == .code ? 2 : 4)
+                    .font(.system(size: 13.5, weight: .regular))
+                    .lineSpacing(4)
                     .foregroundStyle(.white.opacity(0.92))
                     .lineLimit(6)
                     .multilineTextAlignment(.leading)
@@ -545,6 +557,79 @@ private struct ClipCard: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // Link card: favicon + domain headline, path, then any title/summary.
+    private func linkPreview(_ src: String) -> some View {
+        let parts = Self.hostAndPath(src)
+        let extra = Self.linkSubtitle(clip, host: parts.host, path: parts.path)
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 9) {
+                FaviconView(host: parts.host, accent: accent)
+                Text(parts.host)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if !parts.path.isEmpty, parts.path != "/" {
+                Text(parts.path)
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(accent.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let extra, !extra.isEmpty {
+                Text(extra)
+                    .font(.system(size: 12.5))
+                    .lineSpacing(3)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+    }
+
+    // Code card: monospaced text on a slightly inset darker panel.
+    private var codePreview: some View {
+        Text(ClipPresentation.previewText(clip))
+            .font(.system(size: 12, weight: .regular, design: .monospaced))
+            .lineSpacing(2)
+            .foregroundStyle(.white.opacity(0.9))
+            .lineLimit(7)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(12)
+            .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.white.opacity(0.06), lineWidth: 0.5))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+    }
+
+    /// Split a URL into (host without leading www., path+query).
+    static func hostAndPath(_ url: String) -> (host: String, path: String) {
+        let trimmed = url.trimmingCharacters(in: .whitespaces)
+        guard let u = URL(string: trimmed), let rawHost = u.host else {
+            return (trimmed, "")
+        }
+        let host = rawHost.hasPrefix("www.") ? String(rawHost.dropFirst(4)) : rawHost
+        var path = u.path
+        if let q = u.query, !q.isEmpty { path += "?\(q)" }
+        return (host, path)
+    }
+
+    /// A link's title/summary, if it adds anything beyond the host + path.
+    static func linkSubtitle(_ clip: ClipItem, host: String, path: String) -> String? {
+        let text = ClipPresentation.previewText(clip).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        // Hide it when the preview is just the raw URL again.
+        if text.contains(host) && text.count <= host.count + path.count + 12 { return nil }
+        return text
     }
 
     private var footer: some View {
@@ -574,6 +659,43 @@ private struct ClipCard: View {
             Rectangle().fill(.white.opacity(0.07)).frame(height: 1)
         }
         .animation(.easeOut(duration: 0.2), value: selected)
+    }
+}
+
+// MARK: - Favicon
+
+/// Domain favicon for link cards. Loads the real icon asynchronously (cached by
+/// URLSession), and shows a colored monogram while loading / on failure — so the
+/// card is instant and still looks finished offline.
+private struct FaviconView: View {
+    let host: String
+    let accent: Color
+
+    private var faviconURL: URL? {
+        URL(string: "https://www.google.com/s2/favicons?sz=64&domain=\(host)")
+    }
+
+    var body: some View {
+        AsyncImage(url: faviconURL) { phase in
+            if case .success(let image) = phase {
+                image
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .padding(5)
+            } else {
+                monogram
+            }
+        }
+        .frame(width: 30, height: 30)
+        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.10), lineWidth: 0.5))
+    }
+
+    private var monogram: some View {
+        Text(host.first.map { String($0).uppercased() } ?? "•")
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(accent)
     }
 }
 
