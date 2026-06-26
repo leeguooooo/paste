@@ -29,9 +29,9 @@ body {
 }
 
 .app-shell {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0 20px 40px;
+  width: 100%;
+  margin: 0;
+  padding: 0 clamp(18px, 3.2vw, 56px) 40px;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
