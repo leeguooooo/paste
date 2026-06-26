@@ -40,6 +40,11 @@ public final class IslandViewModel: ObservableObject {
     /// (the panel stays open on copy, so it needs an explicit confirmation).
     @Published public var justCopied: Bool = false
 
+    /// Multi-select set (clip ids) for batch delete. Non-empty puts the shelf in
+    /// selection mode: every card shows a checkbox and the hint bar becomes a
+    /// batch-action bar.
+    @Published public var selection: Set<String> = []
+
     /// Wired by AppDelegate.
     public var onPaste: ((ClipItem, _ plainText: Bool) -> Void)?
     public var onCopy: ((ClipItem) -> Void)?
@@ -106,13 +111,36 @@ public final class IslandViewModel: ObservableObject {
         onDelete?(clips[selectedIndex])
     }
 
+    // MARK: Multi-select
+
+    func toggleSelection(_ clip: ClipItem) {
+        if selection.contains(clip.id) { selection.remove(clip.id) }
+        else { selection.insert(clip.id) }
+    }
+
+    func clearSelection() { selection.removeAll() }
+
+    /// Delete every checked clip, then leave selection mode.
+    func deleteSelection() {
+        let ids = selection
+        for clip in clips where ids.contains(clip.id) { onDelete?(clip) }
+        selection.removeAll()
+    }
+
+    /// Backspace routing: batch-delete when in selection mode, else the one card.
+    func deleteSelectedOrSelection() {
+        if selection.isEmpty { deleteSelected() } else { deleteSelection() }
+    }
+
     func toggleFavorite(_ clip: ClipItem) {
         onToggleFavorite?(clip)
     }
 
-    /// Esc: clear query if any, else hide the window.
+    /// Esc: exit selection mode → clear query → hide the window.
     func handleEscape() {
-        if !query.isEmpty {
+        if !selection.isEmpty {
+            selection.removeAll()
+        } else if !query.isEmpty {
             query = ""
             requestRefresh()
         } else {
@@ -314,7 +342,11 @@ private struct HistoryShelf: View {
         VStack(spacing: 12) {
             toolbar
             cardScroller
-            if !viewModel.clips.isEmpty { hintBar }
+            if !viewModel.selection.isEmpty {
+                selectionBar
+            } else if !viewModel.clips.isEmpty {
+                hintBar
+            }
         }
         .offset(y: (entered || viewModel.disableEntrance) ? 0 : 24)
         .opacity((entered || viewModel.disableEntrance) ? 1 : 0)
@@ -345,6 +377,37 @@ private struct HistoryShelf: View {
         .padding(.bottom, 2)
     }
 
+    // Batch-action bar shown while clips are checked.
+    private var selectionBar: some View {
+        HStack(spacing: 12) {
+            Text("\(viewModel.selection.count) selected")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.8))
+            Spacer()
+            Button { viewModel.clearSelection() } label: {
+                Text("Cancel")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .background(.white.opacity(0.08), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            Button { viewModel.deleteSelection() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                    Text("Delete \(viewModel.selection.count)")
+                }
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16).padding(.vertical, 7)
+                .background(Color(hex: "#ff3a2b"), in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 2)
+    }
+
     private var toolbar: some View {
         HStack(spacing: 10) {
             // Search field pill.
@@ -361,7 +424,7 @@ private struct HistoryShelf: View {
                 } onEscape: {
                     viewModel.handleEscape()
                 } onDeleteWhenEmpty: {
-                    viewModel.deleteSelected()
+                    viewModel.deleteSelectedOrSelection()
                 }
                 if !viewModel.clips.isEmpty {
                     Text("\(viewModel.clips.count)")
@@ -413,7 +476,10 @@ private struct HistoryShelf: View {
                                 onTap: { viewModel.paste(at: index, plainText: false) },
                                 onToggleFavorite: { viewModel.toggleFavorite(clip) },
                                 onDelete: { viewModel.onDelete?(clip) },
-                                justCopied: viewModel.justCopied
+                                justCopied: viewModel.justCopied,
+                                inSelection: viewModel.selection.contains(clip.id),
+                                selectionActive: !viewModel.selection.isEmpty,
+                                onToggleSelect: { viewModel.toggleSelection(clip) }
                             )
                             .id(index)
                         }
@@ -481,6 +547,9 @@ private struct ClipCard: View {
     let onToggleFavorite: () -> Void
     let onDelete: () -> Void
     var justCopied: Bool = false
+    var inSelection: Bool = false
+    var selectionActive: Bool = false
+    var onToggleSelect: () -> Void = {}
 
     @State private var hovering = false
     private var accent: Color { clip.type.accent }
@@ -508,12 +577,21 @@ private struct ClipCard: View {
                 )
         }
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        // Hairline border; warms to the accent on selection.
+        // Faint coral wash on checked cards.
+        .overlay {
+            if inSelection {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(Color(hex: "#ff5447").opacity(0.10))
+                    .allowsHitTesting(false)
+            }
+        }
+        // Hairline border; coral when checked, accent when keyboard-selected.
         .overlay {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(
-                    selected ? accent.opacity(0.85) : .white.opacity(hovering ? 0.16 : 0.08),
-                    lineWidth: selected ? 1.5 : 1
+                    inSelection ? Color(hex: "#ff5447")
+                        : (selected ? accent.opacity(0.85) : .white.opacity(hovering ? 0.16 : 0.08)),
+                    lineWidth: (inSelection || selected) ? 1.5 : 1
                 )
         }
         // Depth: soft ambient shadow always, plus a tinted accent glow when selected.
@@ -537,6 +615,16 @@ private struct ClipCard: View {
 
     private var head: some View {
         HStack(spacing: 8) {
+            // Multi-select checkbox — appears on hover or once selection mode is on.
+            Button(action: onToggleSelect) {
+                Image(systemName: inSelection ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(inSelection ? Color(hex: "#ff5447") : .white.opacity(0.45))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity((selectionActive || hovering || inSelection) ? 1 : 0)
+            .allowsHitTesting(selectionActive || hovering || inSelection)
             Text(clip.type.displayLabel)
                 .font(.system(size: 9.5, weight: .bold))
                 .tracking(0.7)

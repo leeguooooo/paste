@@ -52,6 +52,9 @@ private func renderIslandSnapshot(to path: String) {
                  content: "https://github.com/leeguooooo/paste",
                  sourceURL: "https://github.com/leeguooooo/paste", createdAt: now - 7_200_000)
     ]
+    if snapView == "selection", vm.clips.count >= 3 {
+        vm.selection = Set([vm.clips[0].id, vm.clips[2].id])
+    }
 
     // Render the real AppKit-hosted view tree (glass, ScrollView, the NSTextField
     // search bridge) in an off-screen window, spin the run loop so SwiftUI lays
