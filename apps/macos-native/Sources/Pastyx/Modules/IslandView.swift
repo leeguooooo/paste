@@ -238,27 +238,43 @@ public struct IslandView: View {
         // right, and bottom edges sit flush against the screen, so rounding them
         // would just leak the backdrop through the gaps.
         .background {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 22, bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0, topTrailingRadius: 22, style: .continuous
+            let shelf = UnevenRoundedRectangle(
+                topLeadingRadius: 20, bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0, topTrailingRadius: 20, style: .continuous
             )
-            .fill(Color(.sRGB, red: 18/255, green: 18/255, blue: 22/255, opacity: 0.86))
-            .overlay(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 22, bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0, topTrailingRadius: 22, style: .continuous
+            shelf
+                // Slightly graded near-black base — deep enough for constant text
+                // contrast over any backdrop, with a subtle top-to-bottom fall-off
+                // so the shelf reads as a crafted surface, not a flat black bar.
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(.sRGB, red: 26/255, green: 26/255, blue: 31/255, opacity: 0.94),
+                            Color(.sRGB, red: 17/255, green: 17/255, blue: 21/255, opacity: 0.95)
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
                 )
-                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
-            )
+                // Crisp hairline that's brightest along the top edge (catches light).
+                .overlay {
+                    shelf.strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.16), .white.opacity(0.05)],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+                }
         }
         .ignoresSafeArea()
-        // Top specular band across the island (App.tsx .app-shell::before).
+        // Soft specular sheen hugging the top edge — restrained, not a hard band.
         .overlay(alignment: .top) {
             LinearGradient(
-                colors: [Color.white.opacity(0.12), Color.white.opacity(0)],
+                colors: [Color.white.opacity(0.07), Color.white.opacity(0)],
                 startPoint: .top, endPoint: .bottom
             )
-            .frame(height: 84)
+            .frame(height: 58)
+            .blendMode(.plusLighter)
             .allowsHitTesting(false)
         }
         // Hidden keyboard command sinks (Cmd+1..9, Cmd+,) handled at root.
@@ -296,10 +312,10 @@ private struct HistoryShelf: View {
     private var toolbar: some View {
         HStack(spacing: 10) {
             // Search field pill.
-            HStack(spacing: 10) {
+            HStack(spacing: 11) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
                 SearchField(text: $viewModel.query, focused: $searchFocused) {
                     viewModel.requestRefresh()
                 } onArrow: { delta in
@@ -309,19 +325,26 @@ private struct HistoryShelf: View {
                 } onEscape: {
                     viewModel.handleEscape()
                 }
+                if !viewModel.clips.isEmpty {
+                    Text("\(viewModel.clips.count)")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(.white.opacity(0.07), in: Capsule())
+                }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity)
-            .glassEffect(.regular, in: .rect(cornerRadius: 16))
+            .glassEffect(.regular, in: .rect(cornerRadius: 13))
             .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(.white.opacity(0.18), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 13)
+                    .strokeBorder(.white.opacity(0.10), lineWidth: 1)
             )
 
             // Favorites-only toggle.
             ToolbarIconButton(
-                systemName: "star.fill",
+                systemName: viewModel.favoritesOnly ? "star.fill" : "star",
                 active: viewModel.favoritesOnly,
                 accent: Color(hex: "#ffcc00")
             ) {
@@ -330,7 +353,7 @@ private struct HistoryShelf: View {
             }
 
             // Settings gear.
-            ToolbarIconButton(systemName: "gearshape.fill", active: false, accent: .accentColor) {
+            ToolbarIconButton(systemName: "gearshape", active: false, accent: .white) {
                 withAnimation { viewModel.showingSettings = true }
             }
         }
@@ -384,15 +407,25 @@ private struct HistoryShelf: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             Image(systemName: viewModel.favoritesOnly ? "star" : "doc.on.clipboard")
-                .font(.system(size: 30, weight: .light))
-                .foregroundStyle(.white.opacity(0.35))
-            Text(viewModel.favoritesOnly ? "No favorites yet"
-                 : (viewModel.query.isEmpty ? "Copy something to get started"
-                    : "No clips match \u{201C}\(viewModel.query)\u{201D}"))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.5))
+                .font(.system(size: 26, weight: .regular))
+                .foregroundStyle(.white.opacity(0.28))
+                .frame(width: 56, height: 56)
+                .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.06), lineWidth: 1))
+            VStack(spacing: 3) {
+                Text(viewModel.favoritesOnly ? "No favorites yet"
+                     : (viewModel.query.isEmpty ? "Your clipboard history is empty"
+                        : "No matches"))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                Text(viewModel.favoritesOnly ? "Star a clip to keep it here."
+                     : (viewModel.query.isEmpty ? "Copy anything and it shows up instantly."
+                        : "Nothing matches \u{201C}\(viewModel.query)\u{201D}."))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -407,87 +440,84 @@ private struct ClipCard: View {
     let onTap: () -> Void
     let onToggleFavorite: () -> Void
 
+    @State private var hovering = false
     private var accent: Color { clip.type.accent }
+    private let radius: CGFloat = 15
 
     var body: some View {
         VStack(spacing: 0) {
+            accentStrip
             head
             preview
             footer
         }
         .frame(width: 280, height: 244)
+        // Crisp dark slab with a faint top-down grade so it reads as a real surface.
         .background {
-            // Dark glass slab; native Liquid Glass tinted toward the card bg.
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.sRGB, red: 38/255, green: 38/255, blue: 46/255, opacity: 0.92))
-        }
-        // Diagonal specular gloss (.clip-card::after).
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(
                     LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.10), location: 0),
-                            .init(color: .white.opacity(0.02), location: 0.38),
-                            .init(color: .clear, location: 0.60)
+                        colors: [
+                            Color(.sRGB, red: 34/255, green: 34/255, blue: 40/255, opacity: 0.97),
+                            Color(.sRGB, red: 27/255, green: 27/255, blue: 32/255, opacity: 0.97)
                         ],
-                        startPoint: .topTrailing, endPoint: .bottomLeading
+                        startPoint: .top, endPoint: .bottom
                     )
                 )
-                .allowsHitTesting(false)
         }
-        // Hairline border tinted to the accent when selected.
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        // Hairline border; warms to the accent on selection.
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(
-                    selected ? accent.opacity(0.6) : .white.opacity(0.22),
-                    lineWidth: selected ? 1 : 0.5
+                    selected ? accent.opacity(0.85) : .white.opacity(hovering ? 0.16 : 0.08),
+                    lineWidth: selected ? 1.5 : 1
                 )
         }
-        // Accent wash when selected.
-        .overlay {
-            if selected {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(accent.opacity(0.09))
-                    .allowsHitTesting(false)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 8)
-        .offset(y: selected ? -4 : 0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: selected)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        // Depth: soft ambient shadow always, plus a tinted accent glow when selected.
+        .shadow(color: .black.opacity(selected ? 0.4 : 0.22), radius: selected ? 18 : 10, x: 0, y: selected ? 12 : 6)
+        .shadow(color: selected ? accent.opacity(0.28) : .clear, radius: 16, x: 0, y: 6)
+        .scaleEffect(selected ? 1.0 : (hovering ? 0.995 : 0.97), anchor: .bottom)
+        .offset(y: selected ? -6 : 0)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: selected)
+        .animation(.easeOut(duration: 0.16), value: hovering)
+        .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .onTapGesture(perform: onTap)
-        .onHover { hovering in if hovering { onHover() } }
+        .onHover { h in hovering = h; if h { onHover() } }
         .zIndex(selected ? 10 : 0)
     }
 
+    // Thin type-colored strip across the very top — instant visual structure.
+    private var accentStrip: some View {
+        accent.opacity(selected ? 1 : 0.85)
+            .frame(height: 3)
+    }
+
     private var head: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Text(clip.type.displayLabel)
-                    .font(.system(size: 10, weight: .heavy))
-                    .tracking(0.5)
-                    .foregroundStyle(accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(accent.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
-                Text(ClipPresentation.ageShort(clip.createdAt))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-            }
+        HStack(spacing: 8) {
+            Text(clip.type.displayLabel)
+                .font(.system(size: 9.5, weight: .bold))
+                .tracking(0.7)
+                .foregroundStyle(accent)
+            Text(ClipPresentation.ageShort(clip.createdAt))
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.4))
             Spacer(minLength: 4)
             Button(action: onToggleFavorite) {
                 Image(systemName: clip.isFavorite ? "star.fill" : "star")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(clip.isFavorite ? Color(hex: "#ffcc00") : .white.opacity(0.55))
-                    .frame(width: 28, height: 28)
-                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundStyle(clip.isFavorite ? Color(hex: "#ffcc00") : .white.opacity(hovering ? 0.5 : 0.3))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        (clip.isFavorite ? Color(hex: "#ffcc00").opacity(0.14) : .white.opacity(hovering ? 0.08 : 0)),
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
-        .frame(height: 44)
+        .frame(height: 40)
     }
 
     @ViewBuilder
@@ -497,51 +527,73 @@ private struct ClipCard: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
             } else {
                 Text(ClipPresentation.previewText(clip))
-                    .font(.system(size: 14))
-                    .lineSpacing(3)
-                    .foregroundStyle(.white)
+                    .font(clip.type == .code
+                          ? .system(size: 12.5, weight: .regular, design: .monospaced)
+                          : .system(size: 13.5, weight: .regular))
+                    .lineSpacing(clip.type == .code ? 2 : 4)
+                    .foregroundStyle(.white.opacity(0.92))
                     .lineLimit(6)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
-        .clipped()
     }
 
     private var footer: some View {
         let device = ClipPresentation.deviceMeta(clip.deviceId)
-        return HStack {
-            HStack(spacing: 6) {
-                Image(systemName: device.symbol)
-                    .font(.system(size: 11))
-                Text(device.label)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundStyle(.white.opacity(0.55))
-            Spacer()
+        return HStack(spacing: 6) {
+            Image(systemName: device.symbol)
+                .font(.system(size: 10.5))
+            Text(device.label)
+                .font(.system(size: 10.5, weight: .medium))
+                .tracking(0.3)
+                .lineLimit(1)
+            Spacer(minLength: 4)
             if selected {
-                Text("ENTER")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(accent)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                Text("Click to paste")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
+                HStack(spacing: 5) {
+                    Text("paste")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                    Keycap("return")
+                }
+                .transition(.opacity)
             }
         }
-        .padding(.horizontal, 16)
-        .frame(height: 38)
-        .background(.white.opacity(0.02))
+        .foregroundStyle(.white.opacity(0.42))
+        .padding(.horizontal, 14)
+        .frame(height: 36)
         .overlay(alignment: .top) {
-            Rectangle().fill(.white.opacity(0.1)).frame(height: 0.5)
+            Rectangle().fill(.white.opacity(0.07)).frame(height: 1)
         }
-        .animation(.easeOut(duration: 0.25), value: selected)
+        .animation(.easeOut(duration: 0.2), value: selected)
+    }
+}
+
+// MARK: - Keycap
+
+/// A small SF-Symbol keycap pill used for inline keyboard hints (⏎ etc.).
+private struct Keycap: View {
+    let symbol: String
+    init(_ symbol: String) { self.symbol = symbol }
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 9.5, weight: .bold))
+            .foregroundStyle(.white.opacity(0.85))
+            .frame(width: 20, height: 18)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+            )
     }
 }
 
@@ -556,15 +608,15 @@ private struct ToolbarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(active ? accent : .white.opacity(0.8))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(active ? accent : .white.opacity(0.65))
                 .frame(width: 40, height: 40)
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(active ? accent.opacity(0.4) : .white.opacity(0.1), lineWidth: 0.5)
+                .strokeBorder(active ? accent.opacity(0.45) : .white.opacity(0.08), lineWidth: 1)
         )
     }
 }
@@ -755,16 +807,19 @@ public struct SettingsView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
             Text("Settings")
-                .font(.system(size: 17, weight: .heavy))
+                .font(.system(size: 18, weight: .bold))
             Spacer()
             // Single MVP tab.
             Text("System")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.accentColor)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color(hex: "#ff5447"))
+                .padding(.horizontal, 13).padding(.vertical, 7)
+                .background(Color(hex: "#ff5447").opacity(0.14), in: Capsule())
         }
     }
 
@@ -840,8 +895,11 @@ public struct SettingsView: View {
                 .foregroundStyle(.white.opacity(0.5))
         }
         .padding(16)
-        .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
+        .background(
+            Color(.sRGB, red: 32/255, green: 32/255, blue: 38/255, opacity: 0.85),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
     }
 
     private func sectionTitle(_ text: String) -> some View {
@@ -865,7 +923,7 @@ public struct SettingsView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.white)
             .padding(.horizontal, 16).padding(.vertical, 10)
-            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
+            .background(Color(hex: "#ff5447"), in: RoundedRectangle(cornerRadius: 12))
         }
         .font(.system(size: 13, weight: .bold))
     }
