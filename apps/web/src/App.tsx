@@ -423,6 +423,27 @@ export default function App() {
     return data.data;
   };
 
+  // Authenticated write that survives an expired access token: on 401 it silently
+  // refreshes via the stored refresh token and retries once. Read paths refresh
+  // through loadAuth/loadClips, but writes (create/delete/favorite) need this or
+  // they fail ~10 min after sign-in when the access token TTL lapses.
+  const authedWrite = async (path: string, init: RequestInit): Promise<Response> => {
+    let res = await fetch(`${API_BASE}${path}`, { ...init, headers: buildHeaders() });
+    if (res.status === 401) {
+      const refreshToken = localStorage.getItem(SSO_REFRESH_TOKEN_KEY) || "";
+      if (refreshToken) {
+        const refreshed = await exchangeSsoToken({ grantType: "refresh_token", refreshToken });
+        if (refreshed?.accessToken) {
+          res = await fetch(`${API_BASE}${path}`, {
+            ...init,
+            headers: { ...buildHeaders(), authorization: `Bearer ${refreshed.accessToken}` }
+          });
+        }
+      }
+    }
+    return res;
+  };
+
   const maybeHandleSsoCallback = useCallback(async (): Promise<void> => {
     if (!ssoEnabled) return;
     const params = new URLSearchParams(window.location.search);
@@ -607,9 +628,8 @@ export default function App() {
       const body = imageDataUrl
         ? { type: "image", content: "[Image]", imageDataUrl, imagePreviewDataUrl: imageDataUrl, clientUpdatedAt: Date.now() }
         : { type: isUrl ? "link" : "text", content: text, sourceUrl: isUrl ? text : undefined, clientUpdatedAt: Date.now() };
-      const res = await fetch(`${API_BASE}/clips`, {
+      const res = await authedWrite(`/clips`, {
         method: "POST",
-        headers: buildHeaders(),
         body: JSON.stringify(body)
       });
       if (!res.ok) return false;
@@ -627,9 +647,8 @@ export default function App() {
   const handleDelete = async (e: React.MouseEvent, clip: ClipItem) => {
     e.stopPropagation();
     try {
-      await fetch(`${API_BASE}/clips/${clip.id}`, {
+      await authedWrite(`/clips/${clip.id}`, {
         method: "PATCH",
-        headers: buildHeaders(),
         body: JSON.stringify({ isDeleted: true, clientUpdatedAt: Date.now() })
       });
       void loadClips();
@@ -860,9 +879,8 @@ export default function App() {
   const handleToggleFavorite = async (e: React.MouseEvent, clip: ClipItem) => {
     e.stopPropagation();
     try {
-      await fetch(`${API_BASE}/clips/${clip.id}`, {
+      await authedWrite(`/clips/${clip.id}`, {
         method: "PATCH",
-        headers: buildHeaders(),
         body: JSON.stringify({ isFavorite: !clip.isFavorite, clientUpdatedAt: Date.now() })
       });
       void loadClips();
