@@ -109,7 +109,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             Task { @MainActor in
                 self.viewModel.authBusy = true
-                _ = try? await self.auth.startSignIn()
+                self.viewModel.ssoError = nil
+                do {
+                    _ = try await self.auth.startSignIn()
+                } catch {
+                    let msg = (error as? SyncError)?.userMessage ?? error.localizedDescription
+                    self.viewModel.ssoError = msg
+                    NSLog("[pastyx] sign-in failed: \(msg)")
+                }
                 self.viewModel.authStatus = await self.auth.status()
                 self.viewModel.config = self.configStore.config
                 self.viewModel.authBusy = false

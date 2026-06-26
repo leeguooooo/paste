@@ -30,13 +30,15 @@ private func renderIslandSnapshot(to path: String) {
     vm.selectedIndex = 0
     let snapView = ProcessInfo.processInfo.environment["PASTYX_SNAPSHOT_VIEW"]
     vm.justCopied = snapView == "copied"
-    let showSettings = snapView == "settings"
+    let showSettings = snapView == "settings" || snapView == "settings_loggedout"
     vm.showingSettings = showSettings
-    if showSettings {
+    if snapView == "settings" {
         vm.authStatus = AuthStatus(
             remoteEnabled: true, authenticated: true, authConfigured: true,
             user: AuthUser(userId: "u_1", email: "leeguooooo@gmail.com", name: "郭立")
         )
+    } else if snapView == "settings_loggedout" {
+        vm.authStatus = AuthStatus(remoteEnabled: true, authenticated: false, authConfigured: true, user: nil)
     }
     vm.clips = [
         ClipItem(deviceId: "mac_studio", type: .text,

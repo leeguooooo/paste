@@ -28,6 +28,9 @@ public final class IslandViewModel: ObservableObject {
     /// Set while an SSO sign-in / sign-out is in flight (disables the button).
     @Published public var authBusy: Bool = false
 
+    /// Last sign-in error message (shown in settings; nil when none).
+    @Published public var ssoError: String?
+
     /// Bumped on every reveal so the SwiftUI side can replay the entrance
     /// animation and re-focus the search field deterministically.
     @Published public var revealToken: Int = 0
@@ -1112,6 +1115,10 @@ public struct SettingsView: View {
             .scrollIndicators(.hidden)
             actions
         }
+        // Keep settings a readable centered column instead of stretching across
+        // the full-bleed shelf width.
+        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
         .foregroundStyle(.white)
         .offset(y: entered ? 0 : 16)
         .opacity(entered ? 1 : 0)
@@ -1177,18 +1184,44 @@ public struct SettingsView: View {
                 )
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
             } else {
-                Button {
-                    viewModel.onSignIn?()
-                } label: {
-                    Text(viewModel.authBusy ? "Opening browser…" : "Sign in to sync")
-                        .font(.system(size: 14, weight: .heavy))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color(hex: "#ff5447"), in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(.white)
+                HStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 19, weight: .regular))
+                        .foregroundStyle(Color(hex: "#ff5447"))
+                        .frame(width: 42, height: 42)
+                        .background(Color(hex: "#ff5447").opacity(0.14), in: Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Sign in to sync")
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text("Keep your clipboard in sync across Mac, web and phone.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Button { viewModel.onSignIn?() } label: {
+                        Text(viewModel.authBusy ? "Opening…" : "Sign in")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 18).padding(.vertical, 9)
+                            .background(Color(hex: "#ff5447"), in: RoundedRectangle(cornerRadius: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.authBusy)
                 }
-                .buttonStyle(.plain)
-                .disabled(viewModel.authBusy)
+                .padding(14)
+                .background(
+                    Color(.sRGB, red: 32/255, green: 32/255, blue: 38/255, opacity: 0.85),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+            }
+            if let err = viewModel.ssoError, !err.isEmpty {
+                Text(err)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Color(hex: "#ff5447"))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

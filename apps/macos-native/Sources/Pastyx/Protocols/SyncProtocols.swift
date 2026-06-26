@@ -35,6 +35,21 @@ public enum SyncError: Error, Sendable {
     case migrationSource(String)
     /// Generic.
     case generic(String)
+
+    /// Human-readable message for surfacing in the UI.
+    public var userMessage: String {
+        switch self {
+        case .icloudUnavailable: return "iCloud Drive is unavailable."
+        case .remoteDisabled: return "Cloud sync is not enabled."
+        case .authNotConfigured(let m): return m
+        case .ssoFailed(let m): return m
+        case .remote(_, let m): return m
+        case .network(let m): return m
+        case .badCloudFile(let m): return m
+        case .migrationSource(let m): return m
+        case .generic(let m): return m
+        }
+    }
 }
 
 // =============================================================================

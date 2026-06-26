@@ -49,10 +49,10 @@ public struct AppConfig: Codable, Sendable, Equatable {
     public var localSyncDecisionByUser: [String: String]
 
     public init(
-        // Default to the production misonote paste API so SSO sign-in + remote
-        // sync (and thus web<->native data interop) work out of the box. Users
-        // can still point at a self-hosted endpoint in settings.
-        apiBase: String = "https://pasteapi.misonote.com/v1",
+        // Default to the production paste API so SSO sign-in + remote sync (and
+        // thus web<->native data interop) work out of the box. Users can still
+        // point at a self-hosted endpoint in settings.
+        apiBase: String = "https://pasteapi.leeguoo.com/v1",
         userId: String = "mac_user_demo",
         deviceId: String = "macos_desktop",
         autoCapture: Bool = true,
