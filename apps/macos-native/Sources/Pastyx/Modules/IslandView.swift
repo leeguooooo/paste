@@ -373,7 +373,8 @@ private struct HistoryShelf: View {
                                 selected: index == viewModel.selectedIndex,
                                 onHover: { viewModel.selectedIndex = index },
                                 onTap: { viewModel.paste(at: index, plainText: false) },
-                                onToggleFavorite: { viewModel.toggleFavorite(clip) }
+                                onToggleFavorite: { viewModel.toggleFavorite(clip) },
+                                onDelete: { viewModel.onDelete?(clip) }
                             )
                             .id(index)
                         }
@@ -439,6 +440,7 @@ private struct ClipCard: View {
     let onHover: () -> Void
     let onTap: () -> Void
     let onToggleFavorite: () -> Void
+    let onDelete: () -> Void
 
     @State private var hovering = false
     private var accent: Color { clip.type.accent }
@@ -515,6 +517,21 @@ private struct ClipCard: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+
+            // Delete — revealed on hover so the resting card stays clean.
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(width: 26, height: 26)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
+            .animation(.easeOut(duration: 0.14), value: hovering)
+            .help("Delete")
         }
         .padding(.horizontal, 14)
         .frame(height: 40)
