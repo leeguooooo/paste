@@ -5,12 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b1623" />
 
-    <title>Pastyx | 开源剪贴板管理器</title>
+    <title>paste · 在线剪贴板 — 免安装，多设备实时同步</title>
     <meta
       name="description"
-      content="Pastyx 是一款开源、本地优先的剪贴板管理器（独立产品）。支持 macOS 客户端与 Web/PWA，提供搜索、收藏、标签与可选的 Cloudflare 同步。"
+      content="paste 是一个在线剪贴板：打开浏览器就能用，无需安装。自动保存你复制的文字、链接和截图，并在 Mac、Windows、iPhone、Android 和网页之间实时同步。免费、开源，支持搜索与收藏。"
+    />
+    <meta
+      name="keywords"
+      content="在线剪贴板, 云剪贴板, 剪贴板同步, 跨设备剪贴板, 免安装剪贴板, 剪贴板历史, online clipboard, cloud clipboard, clipboard sync, cross-device clipboard, paste"
     />
     <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="author" content="leeguoo" />
     <link rel="canonical" href="__SITE_URL__/" />
 
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%icon-192.svg" />
@@ -18,22 +23,23 @@
     <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Pastyx" />
+    <meta property="og:site_name" content="paste" />
     <meta property="og:locale" content="zh_CN" />
-    <meta property="og:title" content="Pastyx | 开源剪贴板管理器" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta property="og:title" content="paste · 在线剪贴板 — 免安装，多设备实时同步" />
     <meta
       property="og:description"
-      content="开源、本地优先的剪贴板管理器：支持 macOS 客户端与 Web/PWA，同步基于 Cloudflare Workers + D1。支持搜索、收藏、标签、多设备同步。"
+      content="打开浏览器就能用的在线剪贴板：无需安装，复制的文字 / 链接 / 截图自动保存，并在 Mac、Windows、手机和网页之间实时同步。免费、开源。"
     />
     <meta property="og:url" content="__SITE_URL__/" />
     <meta property="og:image" content="__OG_IMAGE_URL__" />
-    <meta property="og:image:alt" content="Pastyx app icon" />
+    <meta property="og:image:alt" content="paste — online clipboard" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Pastyx | 开源剪贴板管理器" />
+    <meta name="twitter:title" content="paste · 在线剪贴板，多设备实时同步" />
     <meta
       name="twitter:description"
-      content="开源、本地优先的剪贴板管理器：支持 macOS 客户端与 Web/PWA，支持同步与内容归档。"
+      content="免安装的在线剪贴板：打开网页即用，剪贴板历史在 Mac、Windows、手机与网页之间实时同步。免费、开源。"
     />
     <meta name="twitter:image" content="__OG_IMAGE_URL__" />
 
@@ -42,20 +48,79 @@
         "@context": "https://schema.org",
         "@graph": [
           {
+            "@type": "WebApplication",
+            "name": "paste",
+            "alternateName": ["在线剪贴板", "Online Clipboard", "云剪贴板"],
+            "url": "__SITE_URL__/",
+            "applicationCategory": "ProductivityApplication",
+            "operatingSystem": "Web, macOS, Windows, iOS, Android",
+            "browserRequirements": "Requires a modern browser with JavaScript",
+            "image": "__OG_IMAGE_URL__",
+            "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "description": "paste 是一个在线剪贴板：打开浏览器即可使用，无需安装。自动保存复制的文字、链接和截图，并在 Mac、Windows、iPhone、Android 和网页之间实时同步。",
+            "featureList": [
+              "在线使用，无需安装",
+              "剪贴板历史自动保存",
+              "Mac、Windows、手机与网页多设备实时同步",
+              "支持文字、链接、截图与图片",
+              "全文搜索、收藏与标签",
+              "本地优先，云同步基于 Cloudflare",
+              "免费、开源"
+            ],
+            "sameAs": ["__GITHUB_URL__"]
+          },
+          {
             "@type": "Organization",
-            "name": "Pastyx",
+            "name": "paste",
             "url": "__SITE_URL__/",
             "logo": "__OG_IMAGE_URL__",
             "sameAs": ["__GITHUB_URL__"]
           },
           {
-            "@type": "SoftwareApplication",
-            "name": "Pastyx",
-            "applicationCategory": "UtilitiesApplication",
-            "operatingSystem": "macOS, Web",
-            "url": "__SITE_URL__/",
-            "isAccessibleForFree": true,
-            "description": "Pastyx 是一款开源、本地优先的剪贴板管理器（独立产品）。支持 macOS 客户端与 Web/PWA，提供搜索、收藏、标签与可选的 Cloudflare 同步。"
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "paste 是什么？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "paste 是一个在线剪贴板（云剪贴板）。它会自动保存你复制的文字、链接和截图，并在你的所有设备之间同步，让你随时找回复制过的内容。"
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "需要安装吗？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "不需要。打开 paste.leeguoo.com 就能在浏览器里直接使用，也可以添加为 PWA。如果想要全局快捷键和系统级粘贴，另有 macOS 桌面客户端可选。"
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "能在多台电脑或手机之间同步吗？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "可以。登录同一个账号后，你的剪贴板会在 Mac、Windows、iPhone、Android 和网页之间实时同步，在一台设备上复制，另一台立即可用。"
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "收费吗？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "免费，并且开源。"
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "数据安全吗？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "paste 采用本地优先设计，可选开启云同步；云端同步基于 Cloudflare Workers 与 D1。是否同步、同步什么由你决定。"
+                }
+              }
+            ]
           }
         ]
       }
@@ -63,6 +128,31 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Crawler / no-JS fallback: concise, factual content for search and AI engines. -->
+    <noscript>
+      <main style="max-width:720px;margin:0 auto;padding:40px 20px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;line-height:1.6;color:#1a1a1a;">
+        <h1>paste — 在线剪贴板，免安装、多设备实时同步</h1>
+        <p>
+          paste 是一个<strong>在线剪贴板（云剪贴板）</strong>：打开浏览器就能用，<strong>无需安装</strong>。
+          它会自动保存你复制的文字、链接和截图，并在 <strong>Mac、Windows、iPhone、Android 和网页</strong>
+          之间<strong>实时同步</strong>——在一台设备上复制，另一台立刻就能粘贴。免费、开源。
+        </p>
+        <h2>核心特性</h2>
+        <ul>
+          <li>在线使用，无需安装（也可添加为 PWA，或下载 macOS 桌面客户端）</li>
+          <li>剪贴板历史自动保存：文字、链接、截图、图片</li>
+          <li>多设备实时同步：Mac、Windows、手机、网页一处复制处处可用</li>
+          <li>全文搜索、收藏、标签</li>
+          <li>本地优先，云同步基于 Cloudflare，免费、开源</li>
+        </ul>
+        <h2>常见问题</h2>
+        <h3>需要安装吗？</h3>
+        <p>不需要，打开网页即可使用；想要全局快捷键可另装 macOS 客户端。</p>
+        <h3>能在多台电脑或手机之间同步吗？</h3>
+        <p>可以，登录后剪贴板在所有设备之间实时同步。</p>
+        <p><a href="https://app.leeguoo.com/paste">了解 paste / 下载桌面客户端</a></p>
+      </main>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
