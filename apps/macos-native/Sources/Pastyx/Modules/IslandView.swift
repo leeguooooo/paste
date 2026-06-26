@@ -324,6 +324,8 @@ private struct HistoryShelf: View {
                     viewModel.pasteSelected(plainText: plain)
                 } onEscape: {
                     viewModel.handleEscape()
+                } onDeleteWhenEmpty: {
+                    viewModel.deleteSelected()
                 }
                 if !viewModel.clips.isEmpty {
                     Text("\(viewModel.clips.count)")
@@ -772,6 +774,7 @@ private struct SearchField: NSViewRepresentable {
     var onArrow: (_ delta: Int) -> Void
     var onEnter: (_ plain: Bool) -> Void
     var onEscape: () -> Void
+    var onDeleteWhenEmpty: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -796,6 +799,7 @@ private struct SearchField: NSViewRepresentable {
         field.onArrow = onArrow
         field.onEnter = onEnter
         field.onEscape = onEscape
+        field.onDeleteWhenEmpty = onDeleteWhenEmpty
         return field
     }
 
@@ -805,6 +809,7 @@ private struct SearchField: NSViewRepresentable {
             nav.onArrow = onArrow
             nav.onEnter = onEnter
             nav.onEscape = onEscape
+            nav.onDeleteWhenEmpty = onDeleteWhenEmpty
         }
         if focused.wrappedValue, field.window?.firstResponder !== field.currentEditor() {
             DispatchQueue.main.async {
@@ -831,6 +836,7 @@ private final class NavTextField: NSTextField {
     var onArrow: ((Int) -> Void)?
     var onEnter: ((Bool) -> Void)?
     var onEscape: (() -> Void)?
+    var onDeleteWhenEmpty: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         let plain = event.modifierFlags.contains(.shift)
@@ -839,6 +845,10 @@ private final class NavTextField: NSTextField {
         case 124: onArrow?(1); return           // right
         case 36, 76: onEnter?(plain); return    // return / enter
         case 53: onEscape?(); return            // esc
+        case 51:                                // delete / backspace
+            // Only hijack when the search box is empty — otherwise it's normal
+            // text editing. Empty + Backspace deletes the selected clip.
+            if stringValue.isEmpty { onDeleteWhenEmpty?(); return }
         default: break
         }
         super.keyDown(with: event)
