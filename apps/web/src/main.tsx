@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import ShareView from "./ShareView";
 import "@leeguoo/design-tokens/tokens.css";
 import "@leeguoo/design-tokens/themes/google.css";
 import "@leeguoo/design-tokens/themes/google-brand-paste.css";
@@ -26,9 +27,11 @@ const clearLegacyServiceWorkerCaches = async (): Promise<void> => {
   );
 };
 
+const shareMatch = window.location.pathname.match(/^\/s\/([0-9a-z]{4,16})$/);
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    {shareMatch ? <ShareView code={shareMatch[1]} /> : <App />}
   </React.StrictMode>
 );
 

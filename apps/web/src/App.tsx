@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
+import QRCode from "qrcode";
 import type { ClipItem, ApiResponse, ClipListResponse } from "@paste/shared";
 import { 
   Search, 
@@ -362,6 +363,9 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [creating, setCreating] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [share, setShare] = useState<{ url: string; qr: string } | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -643,6 +647,47 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadClips, effectiveUserId, effectiveDeviceId, ssoAccessToken]);
+
+  // Anonymous quick-share ("快传") — no login. Posts to /v1/share, builds a
+  // short link + QR. Works for everyone; content is ephemeral (24h TTL).
+  const createShare = useCallback(async (opts: { text?: string; imageDataUrl?: string }): Promise<boolean> => {
+    const text = (opts.text ?? "").trim();
+    const imageDataUrl = opts.imageDataUrl;
+    if (!text && !imageDataUrl) return false;
+    setShareBusy(true);
+    try {
+      const isUrl = !imageDataUrl && /^https?:\/\/\S+$/i.test(text);
+      const body = imageDataUrl
+        ? { type: "image", content: "[Image]", imageDataUrl }
+        : { type: isUrl ? "link" : "text", content: text, sourceUrl: isUrl ? text : undefined };
+      const res = await fetch(`${API_BASE}/share`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data: ApiResponse<{ code: string }> = await res.json();
+      if (!res.ok || !data.ok) return false;
+      const url = `${window.location.origin}/s/${data.data.code}`;
+      const qr = await QRCode.toDataURL(url, { margin: 1, width: 240 });
+      setShare({ url, qr });
+      setShareCopied(false);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    } finally {
+      setShareBusy(false);
+    }
+  }, []);
+
+  const copyShareLink = async () => {
+    if (!share) return;
+    try {
+      await navigator.clipboard.writeText(share.url);
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1600);
+    } catch { /* ignore */ }
+  };
 
   const handleDelete = async (e: React.MouseEvent, clip: ClipItem) => {
     e.stopPropagation();
@@ -1016,6 +1061,15 @@ export default function App() {
             }}
           />
           <div className="composer-actions">
+            <button
+              className="composer-share"
+              type="button"
+              disabled={shareBusy || !draft.trim()}
+              title="生成一个免登录分享链接，24 小时有效"
+              onClick={() => void createShare({ text: draft }).then((ok) => { if (ok) setDraft(""); })}
+            >
+              {shareBusy ? "生成中…" : "快传 (免登录) ↗"}
+            </button>
             {authUser ? (
               <button
                 className="composer-save"
@@ -1031,6 +1085,22 @@ export default function App() {
               </button>
             )}
           </div>
+
+          {share && (
+            <div className="share-result">
+              <img className="share-result-qr" src={share.qr} alt="分享二维码" width={96} height={96} />
+              <div className="share-result-body">
+                <span className="share-result-label">分享链接已生成 · 有效期 24 小时</span>
+                <a className="share-result-link" href={share.url} target="_blank" rel="noopener noreferrer">{share.url}</a>
+                <div className="share-result-actions">
+                  <button className={`share-result-copy ${shareCopied ? "copied" : ""}`} type="button" onClick={copyShareLink}>
+                    {shareCopied ? "已复制 ✓" : "复制链接"}
+                  </button>
+                  <button className="share-result-new" type="button" onClick={() => setShare(null)}>再传一条</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="qr-card doodle-box">

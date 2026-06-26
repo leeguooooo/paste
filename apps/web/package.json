@@ -19,8 +19,10 @@
     "@leeguoo/design-tokens": "~0.2.0",
     "@leeguoo/theme-bootstrap": "~0.2.0",
     "@paste/shared": "0.1.0",
+    "@types/qrcode": "^1.5.6",
     "bootstrap": "^5.3.3",
     "lucide-react": "^0.475.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-bootstrap": "^2.10.9",
     "react-dom": "^19.0.0"
