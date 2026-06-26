@@ -32,6 +32,10 @@ public final class IslandViewModel: ObservableObject {
     /// animation and re-focus the search field deterministically.
     @Published public var revealToken: Int = 0
 
+    /// Skip the entrance animation (offscreen snapshot rendering never fires
+    /// onAppear, so the shelf would otherwise stay at opacity 0).
+    @Published public var disableEntrance: Bool = false
+
     /// Wired by AppDelegate.
     public var onPaste: ((ClipItem, _ plainText: Bool) -> Void)?
     public var onDelete: ((ClipItem) -> Void)?
@@ -294,8 +298,8 @@ private struct HistoryShelf: View {
             toolbar
             cardScroller
         }
-        .offset(y: entered ? 0 : 24)
-        .opacity(entered ? 1 : 0)
+        .offset(y: (entered || viewModel.disableEntrance) ? 0 : 24)
+        .opacity((entered || viewModel.disableEntrance) ? 1 : 0)
         .onAppear {
             entered = false
             withAnimation(.timingCurve(0.21, 1.02, 0.55, 1, duration: 0.22)) { entered = true }
@@ -530,8 +534,8 @@ private struct ClipCard: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0)
-            .allowsHitTesting(hovering)
+            .opacity((hovering || selected) ? 1 : 0)
+            .allowsHitTesting(hovering || selected)
             .animation(.easeOut(duration: 0.14), value: hovering)
             .help("Delete")
         }
