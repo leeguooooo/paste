@@ -28,7 +28,9 @@ private func renderIslandSnapshot(to path: String) {
     let vm = IslandViewModel()
     vm.disableEntrance = true
     vm.selectedIndex = 0
-    let showSettings = ProcessInfo.processInfo.environment["PASTYX_SNAPSHOT_VIEW"] == "settings"
+    let snapView = ProcessInfo.processInfo.environment["PASTYX_SNAPSHOT_VIEW"]
+    vm.justCopied = snapView == "copied"
+    let showSettings = snapView == "settings"
     vm.showingSettings = showSettings
     if showSettings {
         vm.authStatus = AuthStatus(

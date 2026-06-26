@@ -36,8 +36,13 @@ public final class IslandViewModel: ObservableObject {
     /// onAppear, so the shelf would otherwise stay at opacity 0).
     @Published public var disableEntrance: Bool = false
 
+    /// Briefly true after Cmd+C so the selected card can flash "Copied ✓"
+    /// (the panel stays open on copy, so it needs an explicit confirmation).
+    @Published public var justCopied: Bool = false
+
     /// Wired by AppDelegate.
     public var onPaste: ((ClipItem, _ plainText: Bool) -> Void)?
+    public var onCopy: ((ClipItem) -> Void)?
     public var onDelete: ((ClipItem) -> Void)?
     public var onToggleFavorite: ((ClipItem) -> Void)?
     public var onRefresh: (() -> Void)?
@@ -82,6 +87,18 @@ public final class IslandViewModel: ObservableObject {
 
     func pasteSelected(plainText: Bool) {
         paste(at: selectedIndex, plainText: plainText)
+    }
+
+    /// Cmd+C: copy the selected clip to the system clipboard WITHOUT pasting or
+    /// hiding the panel; flash a confirmation.
+    func copySelected() {
+        guard clips.indices.contains(selectedIndex) else { return }
+        onCopy?(clips[selectedIndex])
+        justCopied = true
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            self?.justCopied = false
+        }
     }
 
     func deleteSelected() {
@@ -380,7 +397,8 @@ private struct HistoryShelf: View {
                                 onHover: { viewModel.selectedIndex = index },
                                 onTap: { viewModel.paste(at: index, plainText: false) },
                                 onToggleFavorite: { viewModel.toggleFavorite(clip) },
-                                onDelete: { viewModel.onDelete?(clip) }
+                                onDelete: { viewModel.onDelete?(clip) },
+                                justCopied: viewModel.justCopied
                             )
                             .id(index)
                         }
@@ -447,6 +465,7 @@ private struct ClipCard: View {
     let onTap: () -> Void
     let onToggleFavorite: () -> Void
     let onDelete: () -> Void
+    var justCopied: Bool = false
 
     @State private var hovering = false
     private var accent: Color { clip.type.accent }
@@ -666,13 +685,24 @@ private struct ClipCard: View {
                 .lineLimit(1)
             Spacer(minLength: 4)
             if selected {
-                HStack(spacing: 5) {
-                    Text("paste")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                    Keycap("return")
+                if justCopied {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Copied")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundStyle(Color(hex: "#36a85b"))
+                    .transition(.opacity)
+                } else {
+                    HStack(spacing: 5) {
+                        Text("paste")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.7))
+                        Keycap("return")
+                    }
+                    .transition(.opacity)
                 }
-                .transition(.opacity)
             }
         }
         .foregroundStyle(.white.opacity(0.42))
@@ -911,6 +941,12 @@ private struct KeyboardCommandSink: NSViewRepresentable {
             // Cmd+, -> settings.
             if cmd, event.charactersIgnoringModifiers == "," {
                 DispatchQueue.main.async { withAnimation { vm.showingSettings = true } }
+                return true
+            }
+            // Cmd+C -> copy the selected clip (only when not editing a search
+            // query, so copying typed search text still works).
+            if cmd, event.charactersIgnoringModifiers == "c", vm.query.isEmpty, !vm.clips.isEmpty {
+                DispatchQueue.main.async { vm.copySelected() }
                 return true
             }
             // Cmd+1..9 -> quick paste the Nth visible card.

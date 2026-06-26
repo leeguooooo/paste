@@ -88,6 +88,10 @@ public protocol PasteService: AnyObject {
     /// hide the panel, restore the target app, CGEventPost Cmd+V.
     /// Throws PastyxError on failure.
     func pasteAndHide(_ payload: PastePayload) throws
+
+    /// Copy-only: write the payload to the system clipboard without pasting or
+    /// hiding the panel (no Accessibility gate / synthetic keystroke).
+    func copyToPasteboard(_ payload: PastePayload)
 }
 
 // MARK: - HotKeyManager (Hotkey.swift)

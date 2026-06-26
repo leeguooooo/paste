@@ -89,6 +89,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // 5. View model callbacks.
         viewModel.onRefresh = { [weak self] in self?.refreshClips() }
         viewModel.onPaste = { [weak self] clip, plain in self?.paste(clip, plainText: plain) }
+        viewModel.onCopy = { [weak self] clip in self?.copy(clip) }
         viewModel.onDelete = { [weak self] clip in
             try? self?.store.softDelete(id: clip.id)
             self?.refreshClips()
@@ -235,6 +236,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         if let clips = try? store.list(query) {
             viewModel.clips = clips
         }
+    }
+
+    /// Cmd+C copy-only: write the clip (rich) to the clipboard, no paste/hide.
+    private func copy(_ clip: ClipItem) {
+        let full = (try? store.get(id: clip.id)) ?? clip
+        var payload = PastePayload(
+            text: full.content,
+            html: full.contentHTML,
+            imageURL: full.imageURL,
+            plainTextOnly: false
+        )
+        if full.type == .image,
+           let dataURL = full.extra?["__rawImageDataUrl"],
+           let bytes = Self.decodeDataURL(dataURL) {
+            payload.imageData = bytes
+        }
+        pasteService.copyToPasteboard(payload)
     }
 
     private func paste(_ clip: ClipItem, plainText: Bool) {

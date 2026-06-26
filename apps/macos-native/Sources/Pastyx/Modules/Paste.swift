@@ -131,6 +131,14 @@ public final class CGEventPasteService: PasteService {
         }
     }
 
+    /// Copy-only: write the payload to the system clipboard without pasting or
+    /// hiding the panel. No Accessibility gate needed (no synthetic keystroke).
+    public func copyToPasteboard(_ payload: PastePayload) {
+        writePayloadToPasteboard(payload)
+        // Mark it as already-seen so the watcher doesn't re-capture our own write.
+        watcher.syncFingerprintsFromSystemClipboard()
+    }
+
     // MARK: - Pasteboard writing
 
     /// Write {text, html, image} to NSPasteboard following the Electron priority:
