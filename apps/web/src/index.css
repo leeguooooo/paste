@@ -30,8 +30,9 @@ body {
 
 .app-shell {
   width: 100%;
-  margin: 0;
-  padding: 0 clamp(18px, 3.2vw, 56px) 40px;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 clamp(18px, 3vw, 44px) 40px;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -149,7 +150,7 @@ body {
 .composer-hint { font-size: 12px; color: var(--ink-faint); }
 .composer-input {
   width: 100%;
-  min-height: 86px;
+  min-height: 112px;
   resize: vertical;
   border: 2px solid var(--ink);
   border-radius: 12px;
@@ -221,27 +222,23 @@ body {
   font-size: 15px;
 }
 
-/* ── clip cards (horizontal shelf) ──────────────────────────── */
+/* ── clip cards (responsive wrap grid) ──────────────────────── */
 .history-container {
-  display: flex;
-  gap: 24px;
-  overflow-x: auto;
-  padding: 8px 6px 18px;
-  scroll-snap-type: x proximity;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(266px, 1fr));
+  gap: 22px;
+  padding: 8px 4px 18px;
+  align-content: start;
 }
-.history-container::-webkit-scrollbar { height: 8px; }
-.history-container::-webkit-scrollbar-thumb { background: rgba(26,26,26,0.18); border-radius: 999px; }
 
 .clip-card {
-  flex: 0 0 280px;
-  height: 244px;
+  height: 236px;
   background: var(--paper);
   border-radius: 15px;
   display: flex;
   flex-direction: column;
   cursor: pointer;
   overflow: hidden;
-  scroll-snap-align: center;
   transition: transform 0.14s ease;
 }
 .clip-card:hover { transform: translateY(-3px) rotate(-0.5deg); }
