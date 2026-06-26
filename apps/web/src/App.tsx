@@ -359,7 +359,10 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState(0); 
   const [showSettings, setShowSettings] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  
+  const [draft, setDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const inflightImagePrefetchRef = useRef(new Set<string>());
@@ -592,6 +595,47 @@ export default function App() {
     finally { setLoading(false); }
   }, [query, effectiveUserId, effectiveDeviceId, ssoAccessToken]);
 
+  // Create a new clip from the composer / a global paste. Text URLs become
+  // link clips; everything else is text; images go through imageDataUrl.
+  const createClip = useCallback(async (opts: { text?: string; imageDataUrl?: string }): Promise<boolean> => {
+    const text = (opts.text ?? "").trim();
+    const imageDataUrl = opts.imageDataUrl;
+    if (!text && !imageDataUrl) return false;
+    setCreating(true);
+    try {
+      const isUrl = !imageDataUrl && /^https?:\/\/\S+$/i.test(text);
+      const body = imageDataUrl
+        ? { type: "image", content: "[Image]", imageDataUrl, imagePreviewDataUrl: imageDataUrl, clientUpdatedAt: Date.now() }
+        : { type: isUrl ? "link" : "text", content: text, sourceUrl: isUrl ? text : undefined, clientUpdatedAt: Date.now() };
+      const res = await fetch(`${API_BASE}/clips`, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) return false;
+      await loadClips(true);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    } finally {
+      setCreating(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadClips, effectiveUserId, effectiveDeviceId, ssoAccessToken]);
+
+  const handleDelete = async (e: React.MouseEvent, clip: ClipItem) => {
+    e.stopPropagation();
+    try {
+      await fetch(`${API_BASE}/clips/${clip.id}`, {
+        method: "PATCH",
+        headers: buildHeaders(),
+        body: JSON.stringify({ isDeleted: true, clientUpdatedAt: Date.now() })
+      });
+      void loadClips();
+    } catch (err) { console.error(err); }
+  };
+
   const fetchClipById = useCallback(async (id: string): Promise<ClipItem | null> => {
     try {
       const res = await fetch(`${API_BASE}/clips/${encodeURIComponent(id)}`, {
@@ -705,9 +749,52 @@ export default function App() {
   // Scroll Synchronization
   useEffect(() => {
     if (!scrollContainerRef.current || clips.length === 0) return;
-    const targetScroll = selectedIndex * (280 + 24); 
+    const targetScroll = selectedIndex * (280 + 24);
     scrollContainerRef.current.scrollTo({ left: targetScroll, behavior: "smooth" });
   }, [selectedIndex, clips]);
+
+  // Live cross-browser sync: poll while signed in and the tab is visible, so a
+  // clip copied in another browser/device appears here within a few seconds.
+  useEffect(() => {
+    if (!authReady || !authUser) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadClips();
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [authReady, authUser, loadClips]);
+
+  // Global paste: Cmd/Ctrl+V anywhere (outside inputs) saves a new clip to the
+  // cloud — the fastest way to push something from this browser to the others.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (!authUser) return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (const it of Array.from(items)) {
+          if (it.type.startsWith("image/")) {
+            const file = it.getAsFile();
+            if (file) {
+              const reader = new FileReader();
+              reader.onload = () => void createClip({ imageDataUrl: String(reader.result) });
+              reader.readAsDataURL(file);
+              e.preventDefault();
+              return;
+            }
+          }
+        }
+      }
+      const text = e.clipboardData?.getData("text/plain") || "";
+      if (text.trim()) {
+        void createClip({ text });
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [authUser, createClip]);
 
 	  const handleCopy = async (clip: ClipItem) => {
 	    try {
@@ -849,11 +936,18 @@ export default function App() {
     return { icon: <Cpu size={12} />, label: "DEVICE" };
   };
 
-  const showDemo = !loading && clips.length === 0 && query.trim() === "";
-  const visibleClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, effectiveDeviceId) : clips;
+  const showDemo = !loading && !authUser && clips.length === 0 && query.trim() === "" && !favoritesOnly;
+  const baseClips: ClipCardItem[] = showDemo ? makeDemoClips(effectiveUserId, effectiveDeviceId) : clips;
+  const gridClips: ClipCardItem[] = favoritesOnly ? baseClips.filter((c) => c.isFavorite) : baseClips;
 
   return (
     <main className="app-shell">
+      <svg aria-hidden="true" className="doodle-filters" width="0" height="0">
+        <filter id="rough0"><feTurbulence type="fractalNoise" baseFrequency="0.013" numOctaves="2" seed="2" result="n" /><feDisplacementMap in="SourceGraphic" in2="n" scale="5" xChannelSelector="R" yChannelSelector="G" /></filter>
+        <filter id="rough1"><feTurbulence type="fractalNoise" baseFrequency="0.013" numOctaves="2" seed="7" result="n" /><feDisplacementMap in="SourceGraphic" in2="n" scale="5" xChannelSelector="R" yChannelSelector="G" /></filter>
+        <filter id="rough2"><feTurbulence type="fractalNoise" baseFrequency="0.013" numOctaves="2" seed="12" result="n" /><feDisplacementMap in="SourceGraphic" in2="n" scale="5" xChannelSelector="R" yChannelSelector="G" /></filter>
+        <filter id="roughHi"><feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="2" seed="3" result="n" /><feDisplacementMap in="SourceGraphic" in2="n" scale="3" xChannelSelector="R" yChannelSelector="G" /></filter>
+      </svg>
       <header className="marketing-nav">
         <a className="brand" href={BASE_URL} aria-label="paste home">
           <span className="brand-mark" aria-hidden="true">p</span>
@@ -883,142 +977,154 @@ export default function App() {
         </nav>
       </header>
 
-      <section className="marketing-hero">
-        <div className="hero-inner">
-          <div className="hero-copy">
-            <div className="hero-eyebrow">
-              Open-source. Local-first. Independent product for clipboard history, screenshots, and screen recording.
-            </div>
-            <h1 className="hero-title">
-              The Clipboard,
-              <br />
-              Reimagined.
-            </h1>
-            <p className="hero-subtitle">
-              A high-performance clipboard manager for macOS and Web. Beautiful, private, and free forever.
-            </p>
-            <p className="hero-subtitle mt-2 text-white/60">
-              This is an independent product and is not affiliated with any official clipboard software vendor.
-            </p>
+      <p className="value-strip">✦ 在线剪贴板 · 免安装 · 多设备实时同步 ✦</p>
 
-            <div className="hero-ctas">
-              <a className="btn btn-primary" href="https://github.com/leeguooooo/paste/releases/latest" target="_blank" rel="noopener noreferrer">
-                Download for macOS
-              </a>
-              <a className="btn btn-ghost" href="#demo">
-                Try the web demo
-              </a>
-            </div>
+      <section className="work-row">
+        <div className="composer doodle-box">
+          <div className="composer-head">
+            <span className="composer-title">新建剪贴 ✎</span>
+            <span className="composer-hint">在任意位置 Cmd/Ctrl+V 也能直接存入</span>
           </div>
-
-          <div className="hero-visual" aria-hidden="true">
-            <div className="device-stack">
-              <div className="device-browser">
-                <div className="device-browser-top">
-                  <span className="dot dot-red" />
-                  <span className="dot dot-yellow" />
-                  <span className="dot dot-green" />
-                  <span className="device-browser-title">paste.leeguoo.com</span>
-                </div>
-                <img
-                  src={resolveAssetPath("product/shots/web-live-1920x1080.png")}
-                  alt=""
-                  className="device-browser-img"
-                  loading="lazy"
-                  draggable={false}
-                />
-              </div>
-
-              <div className="device-phone">
-                <img
-                  src={resolveAssetPath("product/shots/web-live-iphone14.png")}
-                  alt=""
-                  className="device-phone-img"
-                  loading="lazy"
-                  draggable={false}
-                />
-              </div>
-            </div>
+          <textarea
+            className="composer-input"
+            placeholder="粘贴或输入要同步的内容…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                if (authUser) void createClip({ text: draft }).then((ok) => { if (ok) setDraft(""); });
+              }
+            }}
+          />
+          <div className="composer-actions">
+            {authUser ? (
+              <button
+                className="composer-save"
+                type="button"
+                disabled={creating || !draft.trim()}
+                onClick={() => void createClip({ text: draft }).then((ok) => { if (ok) setDraft(""); })}
+              >
+                {creating ? "存入中…" : "存入云端 ↑"}
+              </button>
+            ) : (
+              <button className="composer-save" type="button" onClick={signIn} disabled={!authConfigured}>
+                登录后即可同步 →
+              </button>
+            )}
           </div>
+        </div>
+
+        <div className="qr-card doodle-box">
+          <img className="qr-img" src={resolveAssetPath("qr-open.png")} alt="扫码在手机上打开 paste.leeguoo.com" width={132} height={132} draggable={false} />
+          <div className="qr-cap">扫码在手机上打开<br /><span>Open on your phone</span></div>
         </div>
       </section>
 
-      <div className="history-shelf" id="demo">
+      <div className="history-shelf" id="clips">
         <div className="toolbar">
-          <div className="toolbar-search-wrap">
-            <div className="toolbar-search-input-wrap">
-              <Search size={18} className="search-icon" />
-              <input
-                ref={searchInputRef}
-                className="search-input"
-                placeholder="Type to search..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
-            <button className="icon-btn" onClick={() => setShowSettings(true)}>
-              <Settings size={22} />
-            </button>
+          <div className="toolbar-search-input-wrap doodle-box">
+            <Search size={17} className="search-icon" />
+            <input
+              ref={searchInputRef}
+              className="search-input"
+              placeholder="搜索剪贴历史…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
+          <button
+            className={`tool-btn ${favoritesOnly ? "on" : ""}`}
+            onClick={() => setFavoritesOnly((v) => !v)}
+            aria-label="Favorites only"
+            type="button"
+          >
+            <Star size={18} fill={favoritesOnly ? "currentColor" : "transparent"} />
+          </button>
+          <button className="tool-btn" onClick={() => setShowSettings(true)} aria-label="Settings" type="button">
+            <Settings size={18} />
+          </button>
         </div>
 
-        <div className="history-container" ref={scrollContainerRef}>
-          {visibleClips.map((clip, index) => {
-            const isSelected = index === selectedIndex;
-            const isCopied = copiedId === clip.id;
-            const device = getDeviceMeta(clip.deviceId);
-            const age = formatAgeShort(clip.createdAt);
-            return (
-              <div 
-                key={clip.id} 
-                className={`clip-card type-${clip.type} ${isSelected ? 'selected' : ''}`}
-                onClick={() => {
-                  setSelectedIndex(index);
-                  if (clip.__demo) {
-                    void handleCopyDemo(clip);
-                    return;
-                  }
-                  void handleCopy(clip);
-                }}
-              >
-                <div className="clip-head">
-                  <div className="clip-head-left">
-                    <span className="clip-type-pill">{clip.type}</span>
-                    <span className="clip-age">{age}</span>
-                  </div>
-                  {!clip.__demo && (
-                    <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
-                        aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
-                        onClick={(e) => void handleToggleFavorite(e, clip)}
-                        type="button"
-                      >
-                        <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
-                      </button>
+        {gridClips.length === 0 ? (
+          <div className="clips-empty">
+            {favoritesOnly ? "还没有收藏的剪贴。" : (authUser ? "还没有剪贴，粘贴点什么试试 ✎" : "登录后，你的剪贴会在所有设备间同步。")}
+          </div>
+        ) : (
+          <div className="history-container" ref={scrollContainerRef}>
+            {gridClips.map((clip, index) => {
+              const isSelected = index === selectedIndex;
+              const isCopied = copiedId === clip.id;
+              const device = getDeviceMeta(clip.deviceId);
+              const age = formatAgeShort(clip.createdAt);
+              return (
+                <div
+                  key={clip.id}
+                  className={`clip-card doodle-box type-${clip.type} ${isSelected ? 'selected' : ''}`}
+                  onClick={() => {
+                    setSelectedIndex(index);
+                    if (clip.__demo) { void handleCopyDemo(clip); return; }
+                    void handleCopy(clip);
+                  }}
+                >
+                  <div className="clip-strip" />
+                  <div className="clip-head">
+                    <div className="clip-head-left">
+                      {getIcon(clip.type)}
+                      <span className="clip-type-pill">{clip.type}</span>
+                      <span className="clip-age">{age}</span>
                     </div>
-                  )}
-                </div>
-                <div className="clip-preview">
-                  {clip.type === "image" && getImageSrc(clip) ? (
-                    <img src={getImageSrc(clip) as string} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />
-                  ) : (
-                    <div className="preview-text">{clip.summary || clip.content}</div>
-                  )}
-                </div>
-                <div className="clip-footer">
-                  <div className="clip-device" title={clip.deviceId}>
-                    {device.icon}
-                    <span>{device.label}</span>
+                    {!clip.__demo && (
+                      <div className="clip-head-right" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          className={`clip-fav ${clip.isFavorite ? "on" : ""}`}
+                          aria-label={clip.isFavorite ? "Unfavorite" : "Favorite"}
+                          onClick={(e) => void handleToggleFavorite(e, clip)}
+                          type="button"
+                        >
+                          <Star size={14} fill={clip.isFavorite ? "currentColor" : "transparent"} />
+                        </button>
+                        <button
+                          className="clip-del"
+                          aria-label="Delete"
+                          onClick={(e) => void handleDelete(e, clip)}
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <div className="clip-hint">
-                    {isCopied ? "Copied!" : (clip.__demo ? "Click to try" : "Click to copy")}
+                  <div className="clip-preview">
+                    {clip.type === "image" && getImageSrc(clip) ? (
+                      <img src={getImageSrc(clip) as string} className="clip-image-preview" alt="preview" draggable={false} loading="lazy" />
+                    ) : (
+                      <div className="preview-text">{clip.summary || clip.content}</div>
+                    )}
+                  </div>
+                  <div className="clip-footer">
+                    <div className="clip-device" title={clip.deviceId}>
+                      {device.icon}
+                      <span>{device.label}</span>
+                    </div>
+                    <button
+                      className={`clip-copy ${isCopied ? "copied" : ""}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedIndex(index);
+                        if (clip.__demo) { void handleCopyDemo(clip); return; }
+                        void handleCopy(clip);
+                      }}
+                    >
+                      {isCopied ? "已复制 ✓" : "复制"}
+                    </button>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {showSettings && (
@@ -1069,6 +1175,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <footer className="brand-footer">
+        <span className="bf-made">由 <strong>郭立</strong>（leeguoo）打造</span>
+        <nav className="bf-links">
+          <a className="bf-blog" href="https://blog.leeguoo.com" target="_blank" rel="noopener noreferrer">读郭立的博客 →</a>
+          <a href="https://github.com/leeguooooo/paste" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href={PORTAL_HOME_URL}>应用中心</a>
+        </nav>
+      </footer>
     </main>
   );
 }
