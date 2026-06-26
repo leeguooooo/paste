@@ -226,8 +226,8 @@ body {
 .history-container {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(266px, 1fr));
-  gap: 22px;
-  padding: 8px 4px 18px;
+  gap: 30px;
+  padding: 10px 8px 22px;
   align-content: start;
 }
 
@@ -238,14 +238,16 @@ body {
   display: flex;
   flex-direction: column;
   cursor: pointer;
-  overflow: hidden;
+  /* NOT overflow:hidden — that clips the hand-drawn boil border (::before sits
+     at inset:-3px and the turbulence filter displaces it a few px outward). */
+  overflow: visible;
   transition: transform 0.14s ease;
 }
 .clip-card:hover { transform: translateY(-3px) rotate(-0.5deg); }
 .clip-card.selected { transform: translateY(-5px); }
 .clip-card.selected::before { border-color: var(--coral); border-width: 3px; }
 
-.clip-strip { height: 4px; background: var(--ink-faint); flex: none; }
+.clip-strip { height: 4px; background: var(--ink-faint); flex: none; border-radius: 13px 13px 0 0; }
 .clip-card.type-link  .clip-strip { background: #007aff; }
 .clip-card.type-text  .clip-strip { background: #ff9500; }
 .clip-card.type-code  .clip-strip { background: #af52de; }
