@@ -28,6 +28,14 @@ private func renderIslandSnapshot(to path: String) {
     let vm = IslandViewModel()
     vm.disableEntrance = true
     vm.selectedIndex = 0
+    let showSettings = ProcessInfo.processInfo.environment["PASTYX_SNAPSHOT_VIEW"] == "settings"
+    vm.showingSettings = showSettings
+    if showSettings {
+        vm.authStatus = AuthStatus(
+            remoteEnabled: true, authenticated: true, authConfigured: true,
+            user: AuthUser(userId: "u_1", email: "leeguooooo@gmail.com", name: "郭立")
+        )
+    }
     vm.clips = [
         ClipItem(deviceId: "mac_studio", type: .text,
                  content: "rm -rf /Users/leo/clawd/skills/xhs-skill", createdAt: now - 9_000),
@@ -46,7 +54,7 @@ private func renderIslandSnapshot(to path: String) {
     // Render the real AppKit-hosted view tree (glass, ScrollView, the NSTextField
     // search bridge) in an off-screen window, spin the run loop so SwiftUI lays
     // out + draws, then snapshot the layer. ImageRenderer can't do glass/scroll.
-    let size = NSSize(width: 1320, height: 320)
+    let size = NSSize(width: 1320, height: showSettings ? 600 : 320)
     let host = NSHostingView(rootView: IslandView(viewModel: vm))
     host.frame = NSRect(origin: .zero, size: size)
 

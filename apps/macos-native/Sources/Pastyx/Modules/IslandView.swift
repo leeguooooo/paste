@@ -977,27 +977,43 @@ public struct SettingsView: View {
     }
 
     private var accountSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             sectionTitle("ACCOUNT")
             if viewModel.authStatus.authenticated, let user = viewModel.authStatus.user {
                 HStack(spacing: 12) {
+                    // Avatar: first glyph of the display name on a coral disc.
+                    Text(String(user.displayName.first.map(String.init) ?? "?").uppercased())
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(Color(hex: "#ff5447"), in: Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 1))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Signed in")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.45))
-                        Text(user.displayName)
-                            .font(.system(size: 14, weight: .semibold))
+                        Text(user.name ?? user.displayName)
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(user.email ?? "Signed in · syncing")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.5))
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
                     Button("Sign out") { viewModel.onSignOut?() }
                         .buttonStyle(.plain)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 12, weight: .semibold))
                         .padding(.horizontal, 14).padding(.vertical, 8)
                         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.12), lineWidth: 1))
                         .disabled(viewModel.authBusy)
                 }
+                .padding(14)
+                .background(
+                    Color(.sRGB, red: 32/255, green: 32/255, blue: 38/255, opacity: 0.85),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
             } else {
                 Button {
                     viewModel.onSignIn?()
@@ -1034,14 +1050,12 @@ public struct SettingsView: View {
                 .font(.system(size: 13, weight: .semibold))
 
             sectionTitle("RETENTION")
-            Picker("Retention", selection: $draft.retention) {
-                Text("30 days").tag(Retention.d30)
-                Text("180 days").tag(Retention.d180)
-                Text("365 days").tag(Retention.d365)
-                Text("Forever").tag(Retention.forever)
+            HStack(spacing: 8) {
+                retentionChip(.d30, "30 days")
+                retentionChip(.d180, "180 days")
+                retentionChip(.d365, "365 days")
+                retentionChip(.forever, "Forever")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             Text("Favorites are always kept regardless of age.")
                 .font(.system(size: 11))
@@ -1060,6 +1074,23 @@ public struct SettingsView: View {
             .font(.system(size: 12, weight: .heavy))
             .tracking(0.4)
             .foregroundStyle(.white.opacity(0.55))
+    }
+
+    private func retentionChip(_ value: Retention, _ label: String) -> some View {
+        let active = draft.retention == value
+        return Button { draft.retention = value } label: {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(active ? .white : .white.opacity(0.6))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    active ? Color(hex: "#ff5447") : .white.opacity(0.06),
+                    in: Capsule()
+                )
+                .overlay(Capsule().strokeBorder(active ? .clear : .white.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private var actions: some View {
