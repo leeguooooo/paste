@@ -497,16 +497,17 @@ private struct HistoryShelf: View {
                     .padding(.vertical, 8)
                     .frame(maxHeight: .infinity, alignment: .center)
                 }
-                // Center only on keyboard navigation — NOT on hover — so moving the
-                // mouse toward the right edge selects the card under the cursor
-                // instead of auto-scrolling the row away.
+                // Keyboard navigation only (never hover): scroll the MINIMUM amount
+                // to bring the selected card into view — anchor:nil keeps an
+                // already-visible card put, and reveals an off-edge one flush at
+                // the edge, instead of yanking the whole row to center each press.
                 .onChange(of: viewModel.keyboardNavToken) { _, _ in
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        proxy.scrollTo(viewModel.selectedIndex, anchor: .center)
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(viewModel.selectedIndex, anchor: nil)
                     }
                 }
                 .onChange(of: viewModel.revealToken) { _, _ in
-                    proxy.scrollTo(viewModel.selectedIndex, anchor: .center)
+                    proxy.scrollTo(viewModel.selectedIndex, anchor: .leading)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
