@@ -831,6 +831,20 @@ private struct ClipCard: View {
     }
 }
 
+// MARK: - Grouped settings card
+
+/// macOS System-Settings-style grouped card: dark rounded slab + hairline.
+private struct GroupCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Color(.sRGB, red: 32/255, green: 32/255, blue: 38/255, opacity: 0.85),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+    }
+}
+
 // MARK: - Keyboard hint
 
 /// A discreet "⌘C copy" style shortcut hint: a small text keycap + a dim label.
@@ -1127,7 +1141,7 @@ public struct SettingsView: View {
         }
         // Keep settings a readable centered column instead of stretching across
         // the full-bleed shelf width.
-        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: 640, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .center)
         .foregroundStyle(.white)
         .offset(y: entered ? 0 : 16)
@@ -1237,41 +1251,82 @@ public struct SettingsView: View {
     }
 
     private var systemSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("GLOBAL HOTKEY")
-            TextField("CommandOrControl+Shift+V", text: $draft.hotkey)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .semibold))
-                .padding(10)
-                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
-
-            Toggle("Launch at login", isOn: $draft.launchAtLogin)
-                .toggleStyle(.switch)
-                .font(.system(size: 13, weight: .semibold))
-
-            Toggle("Auto-capture clipboard", isOn: $draft.autoCapture)
-                .toggleStyle(.switch)
-                .font(.system(size: 13, weight: .semibold))
-
-            sectionTitle("RETENTION")
-            HStack(spacing: 8) {
-                retentionChip(.d30, "30 days")
-                retentionChip(.d180, "180 days")
-                retentionChip(.d365, "365 days")
-                retentionChip(.forever, "Forever")
+        VStack(alignment: .leading, spacing: 18) {
+            // GENERAL — grouped list (macOS System Settings style).
+            VStack(spacing: 0) {
+                settingRow("command", Color(hex: "#3f6fe0"), "Global hotkey",
+                           subtitle: "Summon the clipboard from anywhere") {
+                    TextField("⌘⇧V", text: $draft.hotkey)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 220)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
+                }
+                groupDivider
+                settingRow("powerplug.fill", Color(hex: "#36a85b"), "Launch at login") {
+                    Toggle("", isOn: $draft.launchAtLogin).labelsHidden().toggleStyle(.switch).tint(Color(hex: "#ff5447"))
+                }
+                groupDivider
+                settingRow("doc.on.clipboard.fill", Color(hex: "#ff5447"), "Auto-capture clipboard",
+                           subtitle: "Save everything you copy to history") {
+                    Toggle("", isOn: $draft.autoCapture).labelsHidden().toggleStyle(.switch).tint(Color(hex: "#ff5447"))
+                }
             }
+            .modifier(GroupCard())
 
-            Text("Favorites are always kept regardless of age.")
+            // HISTORY — retention.
+            VStack(alignment: .leading, spacing: 0) {
+                settingRow("clock.arrow.circlepath", Color(hex: "#e0a32a"), "Keep history for",
+                           subtitle: "Older clips are pruned automatically") { EmptyView() }
+                groupDivider
+                HStack(spacing: 8) {
+                    retentionChip(.d30, "30 days")
+                    retentionChip(.d180, "180 days")
+                    retentionChip(.d365, "365 days")
+                    retentionChip(.forever, "Forever")
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+            }
+            .modifier(GroupCard())
+
+            Text("⭐ Favorites are always kept, regardless of age.")
                 .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.45))
+                .padding(.leading, 4)
         }
-        .padding(16)
-        .background(
-            Color(.sRGB, red: 32/255, green: 32/255, blue: 38/255, opacity: 0.85),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+    }
+
+    /// One row in a grouped settings card: icon tile + title (+ subtitle) + trailing control.
+    private func settingRow<Trailing: View>(
+        _ icon: String, _ tint: Color, _ title: String, subtitle: String? = nil,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(tint, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 13.5, weight: .medium)).foregroundStyle(.white)
+                if let subtitle {
+                    Text(subtitle).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.45))
+                }
+            }
+            Spacer(minLength: 10)
+            trailing()
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 52)
+    }
+
+    private var groupDivider: some View {
+        Rectangle().fill(.white.opacity(0.07)).frame(height: 1).padding(.leading, 52)
     }
 
     private func sectionTitle(_ text: String) -> some View {
