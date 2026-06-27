@@ -35,6 +35,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 1. Config.
         configStore.load()
+        // Cloud sync is the product default. Heal a missing / non-http endpoint
+        // (e.g. a config inherited from a local-only or older build) so "Sign in"
+        // always works without the user ever touching an "API endpoint" field.
+        Self.ensureCloudEndpoint(configStore)
         viewModel.config = configStore.config
 
         // 1c. Sync layer. The remote client reads identity (apiBase/userId/
@@ -110,6 +114,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 self.viewModel.authBusy = true
                 self.viewModel.ssoError = nil
+                Self.ensureCloudEndpoint(self.configStore) // self-heal before sign-in
                 do {
                     _ = try await self.auth.startSignIn()
                 } catch {
@@ -292,6 +297,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSSound.beep()
             NSLog("[pastyx] paste failed: \(error)")
+        }
+    }
+
+    /// Default production cloud endpoint.
+    static let defaultApiBase = "https://pasteapi.leeguoo.com/v1"
+
+    /// Ensure the config points at a usable https cloud endpoint. A clipboard
+    /// product syncs by default; users should never have to type an API URL.
+    static func ensureCloudEndpoint(_ store: ConfigStore) {
+        var cfg = store.config
+        let base = cfg.apiBase.trimmingCharacters(in: .whitespaces).lowercased()
+        if !(base.hasPrefix("http://") || base.hasPrefix("https://")) {
+            cfg.apiBase = defaultApiBase
+            store.save(cfg)
         }
     }
 
