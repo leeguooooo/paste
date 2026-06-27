@@ -81,9 +81,15 @@ public final class IslandViewModel: ObservableObject {
         selectedIndex = min(max(0, selectedIndex), clips.count - 1)
     }
 
+    /// Bumped only on keyboard arrow navigation — the card scroller centers the
+    /// selection on THIS, not on selectedIndex, so mouse hover highlights a card
+    /// without yanking the row around under the cursor.
+    @Published public var keyboardNavToken: Int = 0
+
     func moveSelection(by delta: Int) {
         guard !clips.isEmpty else { return }
         selectedIndex = min(max(0, selectedIndex + delta), clips.count - 1)
+        keyboardNavToken &+= 1
     }
 
     /// Paste the clip at `index` (quick-paste via Cmd+1..9 and clicks).
@@ -491,9 +497,12 @@ private struct HistoryShelf: View {
                     .padding(.vertical, 8)
                     .frame(maxHeight: .infinity, alignment: .center)
                 }
-                .onChange(of: viewModel.selectedIndex) { _, newValue in
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(newValue, anchor: .center)
+                // Center only on keyboard navigation — NOT on hover — so moving the
+                // mouse toward the right edge selects the card under the cursor
+                // instead of auto-scrolling the row away.
+                .onChange(of: viewModel.keyboardNavToken) { _, _ in
+                    withAnimation(.easeInOut(duration: 0.28)) {
+                        proxy.scrollTo(viewModel.selectedIndex, anchor: .center)
                     }
                 }
                 .onChange(of: viewModel.revealToken) { _, _ in
