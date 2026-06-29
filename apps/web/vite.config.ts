@@ -40,7 +40,9 @@ export default defineConfig({
         this.emitFile({
           type: "asset",
           fileName: "robots.txt",
-          source: `User-agent: *\nAllow: /\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
+          // Content Signals (contentsignals.org): allow search + AI answer input
+          // (GEO) + training. Flip ai-train=no to opt out of training.
+          source: `User-agent: *\nContent-Signal: search=yes, ai-input=yes, ai-train=yes\nAllow: /\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
         });
         this.emitFile({
           type: "asset",

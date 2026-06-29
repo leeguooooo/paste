@@ -1,3 +1,7 @@
 # RFC 9727 API Catalog must be served as application/linkset+json.
 /.well-known/api-catalog
   Content-Type: application/linkset+json
+
+# RFC 8288 Link headers for agent discovery on every page.
+/*
+  Link: <https://paste.leeguoo.com/sitemap.xml>; rel="sitemap"; type="application/xml", <https://paste.leeguoo.com/.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"
