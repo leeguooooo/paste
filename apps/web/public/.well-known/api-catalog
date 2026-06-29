@@ -1,0 +1,13 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://pasteapi.leeguoo.com",
+      "service-desc": [
+        { "href": "https://pasteapi.leeguoo.com/openapi.json", "type": "application/json" }
+      ],
+      "service-doc": [
+        { "href": "https://paste.leeguoo.com/", "type": "text/html" }
+      ]
+    }
+  ]
+}

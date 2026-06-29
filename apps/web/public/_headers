@@ -1,0 +1,3 @@
+# RFC 9727 API Catalog must be served as application/linkset+json.
+/.well-known/api-catalog
+  Content-Type: application/linkset+json
