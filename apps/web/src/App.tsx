@@ -637,6 +637,7 @@ export default function App() {
         body: JSON.stringify(body)
       });
       if (!res.ok) return false;
+      (window as any).posthog?.capture?.("clip_created", { clip_type: body.type });
       await loadClips(true);
       return true;
     } catch (e) {
@@ -671,6 +672,7 @@ export default function App() {
       const qr = await QRCode.toDataURL(url, { margin: 1, width: 240 });
       setShare({ url, qr });
       setShareCopied(false);
+      (window as any).posthog?.capture?.("clip_shared", { clip_type: body.type });
       return true;
     } catch (e) {
       console.error(e);
@@ -679,6 +681,19 @@ export default function App() {
       setShareBusy(false);
     }
   }, []);
+
+  // PostHog: tie analytics to the signed-in SSO user so metrics can be analyzed
+  // per user (retention, cross-device merge, who's active) instead of anonymous
+  // -only. Fires once per login; posthog is loaded async so guard defensively.
+  useEffect(() => {
+    if (authUser?.userId) {
+      (window as any).posthog?.identify?.(authUser.userId, {
+        email: authUser.email || undefined,
+        name: authUser.name || undefined,
+        github: authUser.githubLogin || undefined
+      });
+    }
+  }, [authUser?.userId]);
 
   const copyShareLink = async () => {
     if (!share) return;
@@ -978,6 +993,7 @@ export default function App() {
 	      await navigator.clipboard.writeText(fallback);
 	    }
 
+	    (window as any).posthog?.capture?.("clip_copied", { clip_type: clip.type });
 	    setCopiedId(clip.id);
 	    window.setTimeout(() => setCopiedId((prev) => (prev === clip.id ? null : prev)), 900);
 	  };
