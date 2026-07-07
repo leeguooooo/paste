@@ -1,20 +1,34 @@
+<div align="center">
+
+<img src="assets/icon.png" alt="Pastyx" width="120" />
+
 # Pastyx
 
+**Open-source, local-first clipboard toolkit for macOS.**
+Clipboard history, screenshot, and screen recording — with optional, self-hostable cloud sync.
+
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/leeguooooo?logo=github)](https://github.com/sponsors/leeguooooo)
+![Platform](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
+![Status](https://img.shields.io/badge/local--first-no%20account%20required-2e7d32)
+![Open Source](https://img.shields.io/badge/open%20source-yes-ff7a00)
 
-Open-source, free clipboard utility toolkit.
+</div>
 
-中文提示：这是一个独立的开源工具，用于剪贴板历史、截图和录屏。
-免费可用、代码透明，还支持按需自建同步服务。
-我们与官方无隶属关系。
-我们不是 pasteapp，不是 paste 的盗版，且是专注开源的 Pastyx。
-English note: This is an independent open-source project. We are not pasteapp, not a pirated copy of Paste, and we are Pastyx, focused on open-source development.
+<img src="assets/hero.png" alt="Pastyx — clipboard history, screenshot and screen recording, with optional cloud sync" width="100%" />
 
-Pastyx is a local-first clipboard toolkit for macOS (clipboard history, screenshot, and screen recording), with an optional Cloudflare backend for cross-device sync.
+> Pastyx is an **independent** open-source project. We are **not** pasteapp and **not** a pirated copy of Paste — we are Pastyx, focused on open source, with no affiliation to any official vendor.
+> 这是独立开源项目，与官方无隶属关系，不是 pasteapp，也不是 paste 的盗版。
 
-- macOS: tray app, no main window, quick panel
-- Local-first: no URL required; empty URL means local-only (no remote sync)
-- Optional sync: Cloudflare Workers + D1 (and R2 later for large blobs)
+## Why Pastyx
+
+| | |
+| --- | --- |
+| 🖥️ **macOS-native feel** | Tray app, no main window — just a global hotkey and a quick panel. |
+| 🔒 **Local-first** | Works fully offline. No account, no URL required; an empty `API Base` means local-only. |
+| ☁️ **Optional sync** | Bring your own Cloudflare backend (Workers + D1) for cross-device sync — entirely opt-in. |
+| 📋 **Every clip type** | `text` · `link` · `html` · `image`, with search, tags, and favorites. |
+| 📸 **More than clipboard** | Built-in screenshot and screen recording. |
+| 🪪 **Transparent** | Fully open source — read the code, self-host the backend, own your data. |
 
 ## Quick Start
 
