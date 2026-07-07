@@ -817,14 +817,91 @@ export default function App() {
     scrollContainerRef.current.scrollTo({ left: targetScroll, behavior: "smooth" });
   }, [selectedIndex, clips]);
 
-  // Live cross-browser sync: poll while signed in and the tab is visible, so a
-  // clip copied in another browser/device appears here within a few seconds.
+  // Live cross-browser sync — cheap version-probe with adaptive backoff.
+  //
+  // The old design re-pulled the entire clip list every 4s while signed in,
+  // which chained the Worker's request budget to open-tab-hours: one pinned tab
+  // = ~21.6k requests/day whether or not anything changed, so a handful of idle
+  // tabs alone blew past the daily cap. Now we poll a tiny GET /sync/head that
+  // returns only the latest version and reload for real *only when it moves*.
+  //
+  // Two throttles keep it off the treadmill:
+  //   • adaptive interval — 3s right after a change, stretching ×1.5 up to 60s
+  //     while nothing changes, so an active-but-quiet tab costs ~1 req/min;
+  //   • dormancy — if the tab is hidden OR the user hasn't touched anything for
+  //     2 minutes (walked away with the page open), we stop requesting entirely
+  //     and re-arm instantly on the next interaction / refocus.
+  const syncVersionRef = useRef<number>(-1);
   useEffect(() => {
     if (!authReady || !authUser) return;
-    const id = window.setInterval(() => {
-      if (document.visibilityState === "visible") void loadClips();
-    }, 4000);
-    return () => window.clearInterval(id);
+    const FAST = 3000;
+    const SLOW = 60000;
+    const IDLE_MS = 120000; // no interaction for this long ⇒ user is away
+    let delay = FAST;
+    let timer: number | undefined;
+    let running = false;
+    let stopped = false;
+    let lastActivity = Date.now();
+
+    const away = () =>
+      document.visibilityState !== "visible" || Date.now() - lastActivity > IDLE_MS;
+
+    const tick = async () => {
+      timer = undefined;
+      if (stopped || away()) return; // go dormant; wake() re-arms us
+      running = true;
+      try {
+        const res = await fetch(`${API_BASE}/sync/head`, { headers: buildHeaders(false) });
+        const data: ApiResponse<{ version: number; count: number }> = await res.json();
+        if (data.ok && data.data.version !== syncVersionRef.current) {
+          syncVersionRef.current = data.data.version;
+          delay = FAST; // something changed — stay responsive
+          await loadClips();
+        } else {
+          delay = Math.min(Math.round(delay * 1.5), SLOW); // quiet — back off
+        }
+      } catch {
+        delay = Math.min(Math.round(delay * 1.5), SLOW);
+      }
+      running = false;
+      if (!stopped && !away()) timer = window.setTimeout(tick, delay);
+    };
+
+    const wake = () => {
+      lastActivity = Date.now();
+      if (stopped || running || timer !== undefined || away()) return;
+      delay = FAST;
+      timer = window.setTimeout(tick, 0); // immediate catch-up
+    };
+
+    let lastWake = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      lastActivity = now;
+      if (now - lastWake < 1000) return; // throttle mousemove floods
+      lastWake = now;
+      wake();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") wake();
+    };
+
+    window.addEventListener("mousemove", onActivity, { passive: true });
+    window.addEventListener("keydown", onActivity);
+    window.addEventListener("pointerdown", onActivity, { passive: true });
+    window.addEventListener("focus", onActivity);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    timer = window.setTimeout(tick, delay);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      window.removeEventListener("mousemove", onActivity);
+      window.removeEventListener("keydown", onActivity);
+      window.removeEventListener("pointerdown", onActivity);
+      window.removeEventListener("focus", onActivity);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [authReady, authUser, loadClips]);
 
   // Global paste: Cmd/Ctrl+V anywhere (outside inputs) saves a new clip to the

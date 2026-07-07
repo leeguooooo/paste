@@ -1635,6 +1635,30 @@ const handleDeleteTag = async (
   return ok({ id: tagId, deleted: true });
 };
 
+// Ultra-cheap change-detection probe. Returns only the user's latest version
+// (MAX server_updated_at, bumped on every create/update/soft-delete) plus a row
+// count. Clients poll this instead of re-pulling the whole clip list, and only
+// do a real /clips or /sync/pull when `version` actually moves. One indexed
+// lookup — keeps the Worker request cost off the "open-tab-hours" treadmill.
+const handleSyncHead = async (
+  db: D1Database,
+  identity: Identity
+): Promise<Response> => {
+  const row = await db
+    .prepare(
+      `SELECT MAX(server_updated_at) AS version, COUNT(*) AS count
+       FROM clips
+       WHERE user_id = ?1`
+    )
+    .bind(identity.userId)
+    .first<{ version: number | null; count: number | null }>();
+
+  return ok({
+    version: row?.version ?? 0,
+    count: row?.count ?? 0
+  });
+};
+
 const handleSyncPull = async (
   request: Request,
   db: D1Database,
@@ -2473,6 +2497,10 @@ export default {
         if (tagId) {
           return handleDeleteTag(db, identity, tagId);
         }
+      }
+
+      if (request.method === "GET" && path === "/v1/sync/head") {
+        return handleSyncHead(db, identity);
       }
 
       if (request.method === "GET" && path === "/v1/sync/pull") {
