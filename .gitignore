@@ -19,3 +19,8 @@ apps/landing/dist
 
 # Native Swift app build artifacts
 apps/macos-native/.build
+
+# Local tooling / agent scratch / personal npm config
+.omx
+.superpowers
+.npmrc
